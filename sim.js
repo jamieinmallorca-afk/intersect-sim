@@ -150,7 +150,7 @@ For MOTORWAY JUNCTIONS:
       })
     });
 
-    if (!response.ok) throw new Error(`API ${response.status}: ${(await response.text()).slice(0,200)}`);
+    if (!response.ok) throw new Error(`API ${response.status}: ${await response.text()}`);
     const data = await response.json();
     const raw  = data.content.map(b=>b.text||'').join('');
     let parsed;
@@ -746,7 +746,9 @@ class AppController {
         clearInterval(prog);this._hideOverlay();console.error(err);
         const msg=err.message||String(err);
         const isKey=msg.includes('401')||msg.includes('403')||msg.includes('authentication');
-        document.querySelector('.hint-text').textContent=isKey?'⚠ Invalid API key — using fallback':'⚠ '+msg.slice(0,80);
+        // Show full error in console AND hint text so we can diagnose it
+        console.error('FULL ERROR:', msg);
+        document.querySelector('.hint-text').textContent=isKey?'⚠ Invalid API key — using fallback':'⚠ '+msg;
         this.network=ImageAnalyser.fallbackNetwork(W,H,false);
         this._setupCanvas(W,H);this._showControls();this._showFeatures();
       }
