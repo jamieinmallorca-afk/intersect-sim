@@ -325,78 +325,82 @@ class Vehicle {
   _initMotorway({routeType, mainRoadId, slipId}) {
     const net=this.network;
     this.routeType=routeType;
+    const road=net.mainRoads[0];
+    // The renderer draws two carriageways using these exact offsets from centreline:
+    //   carriageway A (dir+1, x1→x2): perpOffset = +(LANE_W*lanesEachWay/2 + 4)
+    //   carriageway B (dir-1, x2→x1): perpOffset = -(LANE_W*lanesEachWay/2 + 4)
+    // We store the actual canvas-space offset vector per direction so vehicles
+    // land exactly on the painted road surface regardless of perp sign ambiguity.
+    const perp = road.angleRad + Math.PI/2;
+    const cpx = Math.cos(perp), cpy = -Math.sin(perp); // unit +perp vector in canvas space
+    const lanes = road.lanesEachWay||2;
+    const halfW = lanes*LANE_W + 4; // matches renderer: halfW=lanes*LANE_W+4
+
+    // Renderer places carriageways in LOCAL coords (road rotated to horizontal):
+    //   dir+1 (x1→x2): y = +4 to +(halfW+4)  → centre at +(4 + halfW/2)  → +perp side
+    //   dir-1 (x2→x1): y = -(halfW+4) to -4  → centre at -(4 + halfW/2)  → -perp side
+    // carriageOff(dir, lane) returns canvas-space offset from road centreline
+    const carriageOff = (dir, lane=0) => {
+      // Centre of outermost lane (lane 0) to innermost (lane lanes-1)
+      // lane 0 = nearest to central reservation = y = dir*(4 + LANE_W*0.5)
+      // lane N = furthest out = y = dir*(4 + LANE_W*(N+0.5))
+      const localY = dir * (4 + LANE_W*(lane+0.5));
+      return { ox: cpx*localY, oy: cpy*localY };
+    };
 
     if (routeType==='through') {
-      const road=net.mainRoads.find(r=>r.id===mainRoadId)||net.mainRoads[0];
-      const perp=road.angleRad+Math.PI/2;
-      const lane=Math.floor(Math.random()*road.lanesEachWay);
-      // RIGHT-HAND TRAFFIC:
-      // Carriageway A (dir +1, x1→x2): vehicles sit on the +perp side of centreline
-      // Carriageway B (dir -1, x2→x1): vehicles sit on the -perp side of centreline
-      // +perp is LEFT of forward direction when facing x1→x2 in screen coords...
-      // Actually: perp = angleRad+π/2. When road goes NE (angleRad~45°), perp points NW.
-      // For right-hand traffic going NE, vehicles should be on the SE side = -perp direction.
-      // Rule: dir=+1 goes x1→x2, sits on -perp side. dir=-1 goes x2→x1, sits on +perp side.
-      const dir=Math.random()<0.5?1:-1;
-      const off=(LANE_W*(lane+0.5)+5)*(-dir); // negative = right of travel
-      this.x=(dir>0?road.x1:road.x2)+Math.cos(perp)*off;
-      this.y=(dir>0?road.y1:road.y2)-Math.sin(perp)*off;
-      const ex=(dir>0?road.x2:road.x1)+Math.cos(perp)*off;
-      const ey=(dir>0?road.y2:road.y1)-Math.sin(perp)*off;
+      const lane = Math.floor(Math.random()*(road.lanesEachWay||2));
+      const dir  = Math.random()<0.5 ? 1 : -1;
+      const {ox,oy} = carriageOff(dir, lane);
+      const sx = (dir>0?road.x1:road.x2)+ox, sy = (dir>0?road.y1:road.y2)+oy;
+      const ex = (dir>0?road.x2:road.x1)+ox, ey = (dir>0?road.y2:road.y1)+oy;
+      this.x=sx; this.y=sy;
       this.speed=SPEED.motorwayMain*(0.85+Math.random()*0.3);
-      this.angle=Math.atan2(ey-this.y, ex-this.x);
-      this.routeDir=dir;    // store for _near filtering
-      this.roadId=road.id;
-      this.isOnSlip=false;
-      this.path=[{ x:ex, y:ey, action:'DONE', speed:this.speed }];
+      this.angle=Math.atan2(ey-sy, ex-sx);
+      this.routeDir=dir; this.roadId=road.id; this.isOnSlip=false;
+      this.path=[{x:ex, y:ey, action:'DONE', speed:this.speed}];
 
     } else if (routeType==='exit') {
-      const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
+      const slip = net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if (!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
-      const road=net.mainRoads.find(r=>r.id===slip.fromRoadId)||net.mainRoads[0];
-      const perp=road.angleRad+Math.PI/2;
-      // Which side of centreline is the branch point on?
-      const perpDot=(slip.bx-road.x1)*Math.cos(perp)-(slip.by-road.y1)*Math.sin(perp);
-      const side=perpDot>=0?1:-1; // +1 = +perp side, -1 = -perp side
-      // For right-hand traffic, that side determines which direction was travelling this carriageway
-      // dir going x1→x2 sits on -perp side, dir going x2→x1 sits on +perp side
-      const dir=side>0?-1:1; // +perp side = dir -1
-      const off=(LANE_W*0.5+5)*(-dir);
+      // Determine which carriageway by checking which side of centreline bx,by falls on
+      const bDot = (slip.bx-road.x1)*cpx + (slip.by-road.y1)*cpy;
+      const dir  = bDot >= 0 ? 1 : -1;
+      const {ox,oy} = carriageOff(dir, 0);
+      // Spawn at far end of carriageway from branch
       const d1=Math.hypot(road.x1-slip.bx, road.y1-slip.by);
       const d2=Math.hypot(road.x2-slip.bx, road.y2-slip.by);
-      const spawnX=(d1>d2?road.x1:road.x2), spawnY=(d1>d2?road.y1:road.y2);
-      this.x=spawnX+Math.cos(perp)*off; this.y=spawnY-Math.sin(perp)*off;
+      const spx=(d1>d2?road.x1:road.x2)+ox, spy=(d1>d2?road.y1:road.y2)+oy;
+      this.x=spx; this.y=spy;
       this.speed=SPEED.motorwayMain;
       this.routeDir=dir; this.roadId=road.id; this.isOnSlip=false;
-      this.angle=Math.atan2(slip.bx-this.x, slip.by-this.y);
+      const bpx=slip.bx+ox, bpy=slip.by+oy;
       const curve=slip.curve||[];
       this.path=[
-        { x:slip.bx+Math.cos(perp)*off, y:slip.by-Math.sin(perp)*off, action:'DECEL', speed:SPEED.motorwayMain },
-        ...curve.map(p=>({ x:p.x, y:p.y, action:'MOVING', speed:SPEED.motorwaySlip })),
-        { x:slip.tx, y:slip.ty, action:'DONE', speed:SPEED.motorwaySlip },
+        {x:bpx, y:bpy, action:'DECEL', speed:SPEED.motorwayMain},
+        ...curve.map(p=>({x:p.x, y:p.y, action:'MOVING', speed:SPEED.motorwaySlip})),
+        {x:slip.tx, y:slip.ty, action:'DONE', speed:SPEED.motorwaySlip},
       ];
 
     } else { // on-ramp
-      const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
+      const slip = net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if (!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
-      const road=net.mainRoads.find(r=>r.id===slip.toRoadId)||net.mainRoads[0];
-      const perp=road.angleRad+Math.PI/2;
-      const perpDot=(slip.bx-road.x1)*Math.cos(perp)-(slip.by-road.y1)*Math.sin(perp);
-      const side=perpDot>=0?1:-1;
-      const dir=side>0?-1:1;
-      const off=(LANE_W*0.5+5)*(-dir);
+      const bDot = (slip.bx-road.x1)*cpx + (slip.by-road.y1)*cpy;
+      const dir  = bDot >= 0 ? 1 : -1;
+      const {ox,oy} = carriageOff(dir, 0);
       const d1=Math.hypot(road.x1-slip.bx, road.y1-slip.by);
       const d2=Math.hypot(road.x2-slip.bx, road.y2-slip.by);
-      const exitX=(d1>d2?road.x1:road.x2), exitY=(d1>d2?road.y1:road.y2);
+      const exitX=(d1>d2?road.x1:road.x2)+ox, exitY=(d1>d2?road.y1:road.y2)+oy;
       this.x=slip.tx; this.y=slip.ty;
       this.mergeDelay=slip.hasMergeConflict?this.rules.conflictFactor*(1+Math.random()*2):0;
       this.speed=SPEED.motorwaySlip;
       this.routeDir=dir; this.roadId=road.id; this.isOnSlip=true;
+      const bpx=slip.bx+ox, bpy=slip.by+oy;
       const curve=slip.curve||[];
       this.path=[
-        ...[...curve].reverse().map(p=>({ x:p.x, y:p.y, action:'MOVING', speed:SPEED.motorwaySlip })),
-        { x:slip.bx+Math.cos(perp)*off, y:slip.by-Math.sin(perp)*off, action:'MERGE', speed:SPEED.motorwaySlip },
-        { x:exitX+Math.cos(perp)*off,   y:exitY-Math.sin(perp)*off,   action:'DONE',  speed:SPEED.motorwayMain },
+        ...[...curve].reverse().map(p=>({x:p.x, y:p.y, action:'MOVING', speed:SPEED.motorwaySlip})),
+        {x:bpx, y:bpy, action:'MERGE', speed:SPEED.motorwaySlip},
+        {x:exitX, y:exitY, action:'DONE', speed:SPEED.motorwayMain},
       ];
     }
   }
