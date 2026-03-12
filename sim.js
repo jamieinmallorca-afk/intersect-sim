@@ -303,16 +303,22 @@ class Vehicle {
     const xr=exits[Math.floor(Math.random()*exits.length)]||er;
     this.entryRoad=er; this.exitRoad=xr;
     const perpIn=er.angleRad+Math.PI/2, perpOut=xr.angleRad+Math.PI/2;
+    // RIGHT-HAND TRAFFIC:
+    // Approaching the junction: vehicle is on RIGHT side of its road = +perp offset
+    // (road points FROM external endpoint TO junction, so +perp = right of travel direction)
     const inOff=LANE_W*(Math.floor(Math.random()*er.lanesIn)+0.5);
+    // Exiting the junction: vehicle travels AWAY from junction along exit road
+    // Direction of travel is now REVERSED relative to the road definition
+    // So right-hand side = NEGATIVE perp offset
     const outOff=LANE_W*(Math.floor(Math.random()*xr.lanesOut)+0.5);
     this.x=er.ex+Math.cos(perpIn)*inOff; this.y=er.ey-Math.sin(perpIn)*inOff;
     this.speed=SPEED.urban;
     this.hesTimer=Math.max(0,this.rules.hesitationMean*(0.5+Math.random()));
     this.path=[
-      { x:er.ix+Math.cos(perpIn)*inOff,  y:er.iy-Math.sin(perpIn)*inOff,  action:'STOP_CHECK', speed:SPEED.urban   },
-      { x:net.cx+(Math.random()-0.5)*14, y:net.cy+(Math.random()-0.5)*14,  action:'CROSS',      speed:SPEED.urban*0.7 },
-      { x:xr.ix+Math.cos(perpOut)*outOff,y:xr.iy-Math.sin(perpOut)*outOff, action:'EXIT',       speed:SPEED.urban   },
-      { x:xr.ex+Math.cos(perpOut)*outOff,y:xr.ey-Math.sin(perpOut)*outOff, action:'DONE',       speed:SPEED.urban   },
+      { x:er.ix+Math.cos(perpIn)*inOff,   y:er.iy-Math.sin(perpIn)*inOff,   action:'STOP_CHECK', speed:SPEED.urban    },
+      { x:net.cx+(Math.random()-0.5)*14,   y:net.cy+(Math.random()-0.5)*14,  action:'CROSS',      speed:SPEED.urban*0.7 },
+      { x:xr.ix-Math.cos(perpOut)*outOff,  y:xr.iy+Math.sin(perpOut)*outOff, action:'EXIT',       speed:SPEED.urban    },
+      { x:xr.ex-Math.cos(perpOut)*outOff,  y:xr.ey+Math.sin(perpOut)*outOff, action:'DONE',       speed:SPEED.urban    },
     ];
   }
 
@@ -672,105 +678,122 @@ class AppController {
     this.animId=null;this.simTime=0;
     this.opts={volume:'medium',timeHour:8,signalTiming:'adaptive',ruleSystem:'uk',speed:1};
     // Road marking tool state
-    this._markedPoints=[];   // [{x,y}] in preview image coords
+    // Each road = { outer:{x,y,dx,dy}, inner:{x,y,dx,dy} }
+    // Clicking alternates: outer(A/B/C) then inner(1/2/3)
+    this._roads = [];
+    this._pendingOuter = null;
     this._imgNaturalW=1; this._imgNaturalH=1;
+    this._markingMode = 'intersection'; // 'intersection' | 'motorway'
     this._bindUI();
   }
 
-  // ── Manual road marking colours ───────────────────────────
   _markColour(i){
-    const cols=['#e53e3e','#d97706','#16a34a','#2563eb','#7c3aed','#db2777'];
-    return cols[i % cols.length];
+    return ['#e53e3e','#d97706','#16a34a','#2563eb','#7c3aed','#db2777'][i%6];
   }
 
-  // ── Build a network from manually-marked points ───────────
-  _buildFromMarkedPoints(canvasW, canvasH){
-    const pts = this._markedPoints;
-    if (pts.length < 2) return null;
+  _updateMarkBadge(){
+    const badge=document.getElementById('markModeBadge');
+    const label=document.getElementById('markModeLabel');
+    const instr=document.getElementById('markInstructions');
+    if(!badge)return;
+    const n=this._roads.length;
 
-    // Scale marked points from preview image coords to canvas coords
-    const previewEl = document.getElementById('mapThumb');
-    const scaleX = canvasW / this._imgNaturalW;
-    const scaleY = canvasH / this._imgNaturalH;
-
-    const cx = canvasW / 2, cy = canvasH / 2;
-
-    // Each marked point is treated as a road arm endpoint
-    // Angle = from centre toward the marked point
-    const roads = pts.map((p, i) => {
-      const wx = p.x * scaleX;
-      const wy = p.y * scaleY;
-      const dx = wx - cx, dy = wy - cy;
-      const rad = Math.atan2(-dy, dx);   // canvas Y is inverted
-      const deg = ((rad * 180 / Math.PI) + 360) % 360;
-      const reach = Math.hypot(dx, dy);
-      return {
-        id: i, angleDeg: Math.round(deg), angleRad: rad,
-        lanesIn: 2, lanesOut: 2,
-        hasSignal: pts.length <= 4,   // add signals for 4-way or fewer
-        hasCrosswalk: false,
-        roadType: 'major',
-        ex: cx + Math.cos(rad) * reach,
-        ey: cy - Math.sin(rad) * reach,
-        ix: cx + Math.cos(rad) * 55,
-        iy: cy - Math.sin(rad) * 55,
-      };
-    });
-
-    // Detect if it looks like a motorway (user marked exactly 2 main roads
-    // with 2 extra slip road points = 4+ total roughly grouped in pairs)
-    const isMotorway = pts.length >= 4;
-
-    if (isMotorway) {
-      // Treat first 2 points as one main road, next 2 as second, etc.
-      // Pair opposite-ish points as same road
-      const sorted = [...roads].sort((a,b)=>a.angleDeg-b.angleDeg);
-      const mainRoads=[], seen=new Set();
-      for(let i=0;i<sorted.length;i++){
-        if(seen.has(i))continue;
-        let oppIdx=-1, minDiff=Infinity;
-        for(let j=i+1;j<sorted.length;j++){
-          if(seen.has(j))continue;
-          const diff=Math.abs(Math.abs(sorted[i].angleDeg-sorted[j].angleDeg)-180);
-          if(diff<minDiff){minDiff=diff;oppIdx=j;}
-        }
-        const r=sorted[i];
-        const len=Math.hypot(r.ex-cx,r.ey-cy);
-        if(oppIdx>=0){
-          const op=sorted[oppIdx]; seen.add(oppIdx);
-          mainRoads.push({id:mainRoads.length,name:`Road ${mainRoads.length+1}`,
-            angleRad:r.angleRad,angleDeg:r.angleDeg,lanesEachWay:2,
-            speedLimit:100,roadType:'motorway',
-            x1:r.ex,y1:r.ey,x2:op.ex,y2:op.ey});
-        }else{
-          mainRoads.push({id:mainRoads.length,name:`Road ${mainRoads.length+1}`,
-            angleRad:r.angleRad,angleDeg:r.angleDeg,lanesEachWay:2,
-            speedLimit:100,roadType:'motorway',
-            x1:cx-Math.cos(r.angleRad)*len,y1:cy+Math.sin(r.angleRad)*len,
-            x2:r.ex,y2:r.ey});
-        }
-        seen.add(i);
+    if(this._markingMode==='motorway'){
+      instr.innerHTML='Click the <strong>outer end</strong> of a slip road (A, B…) then where it <strong>joins the motorway</strong> (1, 2…). The main carriageway is drawn automatically.';
+      if(this._pendingOuter){
+        badge.textContent=String(n+1);
+        badge.style.background=this._markColour(n);
+        label.textContent=`Click where slip road ${String.fromCharCode(65+n)} joins the motorway`;
+      }else{
+        badge.textContent=String.fromCharCode(65+n);
+        badge.style.background=n===0?'var(--accent)':this._markColour(n);
+        label.textContent=n===0
+          ?'Click the far end of the first slip road'
+          :`Click far end of slip road ${String.fromCharCode(65+n)} (or Build if done)`;
       }
-      // Auto-generate slip roads between main road pairs
-      const slipRoads=[];
-      if(mainRoads.length>=2){
-        const mr0=mainRoads[0],mr1=mainRoads[1];
-        const mx=(mr0.x1+mr0.x2)/2,my=(mr0.y1+mr0.y2)/2;
-        const perp=mr0.angleRad+Math.PI/2;
-        slipRoads.push(
-          {id:0,type:'off-ramp',fromRoadId:0,toRoadId:1,hasMergeConflict:false,
-           bx:mx-60,by:my,tx:mx-60+90,ty:my-90,slipLen:120},
-          {id:1,type:'on-ramp', fromRoadId:1,toRoadId:0,hasMergeConflict:true,
-           bx:mx+60,by:my,tx:mx+60+90,ty:my-90,slipLen:120}
-        );
-      }
-      return {mode:'motorway',junctionType:'interchange',mainRoads,slipRoads,
-        cx,cy,speedLimit:100,features:['Manually marked motorway junction'],confidence:1.0};
     }else{
-      // Standard intersection
-      const type=roads.length===3?'T-junction':roads.length===4?'4-way':'complex';
-      return {mode:'intersection',intersectionType:type,roads,cx,cy,reach:Math.min(canvasW,canvasH)*0.42,
-        hasCentralIsland:false,speedLimit:50,features:['Manually marked intersection'],confidence:1.0};
+      instr.innerHTML='Click the <strong>outer end</strong> of a road (A, B, C…) then where it <strong>meets the junction</strong> (1, 2, 3…).';
+      if(this._pendingOuter){
+        badge.textContent=String(n+1);
+        badge.style.background=this._markColour(n);
+        label.textContent=`Now click where road ${String.fromCharCode(65+n)} meets the junction`;
+      }else{
+        badge.textContent=String.fromCharCode(65+n);
+        badge.style.background=n===0?'var(--accent)':this._markColour(n);
+        label.textContent=n===0
+          ?'Click the outer end of the first road'
+          :`Click outer end of road ${String.fromCharCode(65+n)} (or Build when done)`;
+      }
+    }
+  }
+
+  _buildFromMarkedPoints(canvasW, canvasH){
+    const roads=this._roads;
+    if(roads.length<1)return null;
+    const cx=canvasW/2, cy=canvasH/2;
+    const sx=canvasW/this._imgNaturalW, sy=canvasH/this._imgNaturalH;
+
+    if(this._markingMode==='motorway'){
+      // Main carriageway runs horizontally across the full canvas (can be rotated later)
+      // Detect angle from marked slip roads — use average angle of inner points relative to centre
+      let mainAngle=0;
+      if(roads.length>=2){
+        // Guess main road angle as perpendicular to the average slip road direction
+        const avgDx=roads.reduce((s,r)=>s+(r.inner.x*sx-cx),0)/roads.length;
+        const avgDy=roads.reduce((s,r)=>s+(r.inner.y*sy-cy),0)/roads.length;
+        mainAngle=Math.atan2(-avgDy,avgDx)+Math.PI/2;
+      }
+      const mainLen=Math.min(canvasW,canvasH)*0.48;
+      const mainRoads=[{
+        id:0, name:'Main Carriageway',
+        angleRad:mainAngle, angleDeg:Math.round(((mainAngle*180/Math.PI)+360)%360),
+        lanesEachWay:3, speedLimit:120, roadType:'motorway',
+        x1:cx-Math.cos(mainAngle)*mainLen, y1:cy+Math.sin(mainAngle)*mainLen,
+        x2:cx+Math.cos(mainAngle)*mainLen, y2:cy-Math.sin(mainAngle)*mainLen,
+      }];
+
+      // Each marked pair becomes a slip road
+      const slipRoads=roads.map((road,i)=>{
+        const ox=road.outer.x*sx, oy=road.outer.y*sy;
+        const ix=road.inner.x*sx, iy=road.inner.y*sy;
+        // Angle of slip road (outer→inner direction)
+        const slipAngle=Math.atan2(iy-oy,ix-ox);
+        const slipLen=Math.hypot(ix-ox,iy-oy);
+        // Determine if on-ramp or off-ramp by which side of main road the outer end is on
+        const side=(ox-cx)*Math.sin(mainAngle)+(oy-cy)*Math.cos(mainAngle);
+        const type=i%2===0?'off-ramp':'on-ramp';
+        return {
+          id:i, type,
+          fromRoadId:0, toRoadId:0,
+          hasMergeConflict:type==='on-ramp',
+          bx:ix, by:iy,     // branch point on main road = inner click
+          tx:ox, ty:oy,     // tip of slip road = outer click
+          slipLen,
+        };
+      });
+
+      return{mode:'motorway',junctionType:'interchange',mainRoads,slipRoads,
+        cx,cy,speedLimit:120,features:['Manually marked motorway junction'],confidence:1.0};
+
+    }else{
+      // Intersection mode — each pair is a road arm
+      const netRoads=roads.map((road,i)=>{
+        const ox=road.outer.x*sx, oy=road.outer.y*sy;
+        const ix=road.inner.x*sx, iy=road.inner.y*sy;
+        const dx=ix-ox, dy=iy-oy;
+        const rad=Math.atan2(-dy,dx);
+        const deg=((rad*180/Math.PI)+360)%360;
+        return{
+          id:i, angleDeg:Math.round(deg), angleRad:rad,
+          lanesIn:2, lanesOut:2, hasSignal:roads.length<=4,
+          hasCrosswalk:false, roadType:'major',
+          ex:ox, ey:oy, ix:ix, iy:iy,
+        };
+      });
+      const type=netRoads.length===3?'T-junction':netRoads.length===4?'4-way':'complex';
+      return{mode:'intersection',intersectionType:type,roads:netRoads,cx,cy,
+        reach:Math.min(canvasW,canvasH)*0.42,hasCentralIsland:false,
+        speedLimit:50,features:['Manually marked intersection'],confidence:1.0};
     }
   }
 
@@ -785,7 +808,7 @@ class AppController {
       ['previewSection','markTool','controlsSection','analysisSection'].forEach(id=>{document.getElementById(id).style.display='none';});
       document.getElementById('uploadZone').style.display='';
       document.getElementById('btnExport').style.display='none';
-      this._markedPoints=[];
+      this._roads=[];this._pendingOuter=null;
       this._stopSim();
     });
 
@@ -793,9 +816,27 @@ class AppController {
     document.getElementById('mapPreviewWrap').addEventListener('click', e => this._onMapClick(e));
     document.getElementById('btnBuild').addEventListener('click', () => this._buildFromMarks());
     document.getElementById('btnMarkClear').addEventListener('click', () => {
-      this._markedPoints = [];
+      this._roads=[];this._pendingOuter=null;
       this._redrawOverlay();
-      document.getElementById('markRoadList').innerHTML = '';
+      document.getElementById('markRoadList').innerHTML='';
+      this._updateMarkBadge();
+    });
+    // Mode toggle
+    document.getElementById('modeIntersection').addEventListener('click',()=>{
+      this._markingMode='intersection';
+      document.getElementById('modeIntersection').classList.add('active');
+      document.getElementById('modeMotorway').classList.remove('active');
+      this._roads=[];this._pendingOuter=null;
+      this._redrawOverlay();document.getElementById('markRoadList').innerHTML='';
+      this._updateMarkBadge();
+    });
+    document.getElementById('modeMotorway').addEventListener('click',()=>{
+      this._markingMode='motorway';
+      document.getElementById('modeMotorway').classList.add('active');
+      document.getElementById('modeIntersection').classList.remove('active');
+      this._roads=[];this._pendingOuter=null;
+      this._redrawOverlay();document.getElementById('markRoadList').innerHTML='';
+      this._updateMarkBadge();
     });
 
     this._bindPills('volumeBtns','volume');this._bindPills('signalBtns','signalTiming');this._bindPills('ruleBtns','ruleSystem');
@@ -840,9 +881,9 @@ class AppController {
       document.getElementById('uploadZone').style.display='none';
       document.getElementById('previewSection').style.display='';
       document.getElementById('markTool').style.display='';
-      this._markedPoints=[];
+      this._roads=[];this._pendingOuter=null;
       document.getElementById('markRoadList').innerHTML='';
-      setTimeout(()=>this._redrawOverlay(),50); // wait for img render
+      setTimeout(()=>{this._redrawOverlay();this._updateMarkBadge();},50);
       const hasKey=!!document.getElementById('apiKeyInput').value.trim();
       document.getElementById('hintText').textContent=hasKey
         ? 'Click road arms on the map to mark them, then Build — or just click Build for AI auto-detect.'
@@ -855,16 +896,23 @@ class AppController {
     const img=document.getElementById('mapThumb');
     const imgRect=img.getBoundingClientRect();
     const x=e.clientX-imgRect.left, y=e.clientY-imgRect.top;
-    if(x<0||y<0||x>imgRect.width||y>imgRect.height) return;
-    this._markedPoints.push({
-      // Natural image coords (for network building)
-      x: x*(this._imgNaturalW/imgRect.width),
-      y: y*(this._imgNaturalH/imgRect.height),
-      // Display coords (for overlay drawing)
-      dx: x, dy: y,
-    });
+    if(x<0||y<0||x>imgRect.width||y>imgRect.height)return;
+    const pt={
+      x:x*(this._imgNaturalW/imgRect.width),
+      y:y*(this._imgNaturalH/imgRect.height),
+      dx:x, dy:y,
+    };
+    if(!this._pendingOuter){
+      // First click of a pair = outer end (A, B, C…)
+      this._pendingOuter=pt;
+    }else{
+      // Second click = inner end (1, 2, 3…)
+      this._roads.push({outer:this._pendingOuter, inner:pt});
+      this._pendingOuter=null;
+    }
     this._redrawOverlay();
     this._updateMarkList();
+    this._updateMarkBadge();
   }
 
   _redrawOverlay(){
@@ -873,53 +921,83 @@ class AppController {
     oc.width=img.clientWidth||250; oc.height=img.clientHeight||160;
     const ctx=oc.getContext('2d');
     ctx.clearRect(0,0,oc.width,oc.height);
-    const cx=oc.width/2, cy=oc.height/2;
-    // Centre crosshair
-    ctx.strokeStyle='rgba(217,119,6,0.4)'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
-    ctx.beginPath();ctx.moveTo(cx,0);ctx.lineTo(cx,oc.height);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(0,cy);ctx.lineTo(oc.width,cy);ctx.stroke();
-    ctx.setLineDash([]);
-    this._markedPoints.forEach((p,i)=>{
+    const sx=oc.width/(img.clientWidth||oc.width), sy=oc.height/(img.clientHeight||oc.height);
+
+    // Draw completed road pairs
+    this._roads.forEach((road,i)=>{
       const col=this._markColour(i);
-      const sx=oc.width/(img.clientWidth||oc.width), sy=oc.height/(img.clientHeight||oc.height);
-      const dx=p.dx*sx, dy=p.dy*sy;
-      ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.setLineDash([5,4]);
-      ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(dx,dy);ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.beginPath();ctx.arc(dx,dy,7,0,Math.PI*2);
-      ctx.fillStyle=col+'cc';ctx.fill();
+      const ox=road.outer.dx*sx, oy=road.outer.dy*sy;
+      const ix=road.inner.dx*sx, iy=road.inner.dy*sy;
+      // Line from outer to inner
+      ctx.strokeStyle=col; ctx.lineWidth=2; ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(ox,oy);ctx.lineTo(ix,iy);ctx.stroke();
+      // Outer dot (A/B/C)
+      ctx.beginPath();ctx.arc(ox,oy,8,0,Math.PI*2);ctx.fillStyle=col+'bb';ctx.fill();
       ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
       ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText(i+1,dx,dy);
+      ctx.fillText(String.fromCharCode(65+i),ox,oy);
+      // Inner dot (1/2/3) — square to distinguish
+      ctx.fillStyle=col+'bb';ctx.strokeStyle='#fff';ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.roundRect(ix-6,iy-6,12,12,2);ctx.fill();ctx.stroke();
+      ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(String(i+1),ix,iy);
     });
+
+    // Draw pending outer point
+    if(this._pendingOuter){
+      const n=this._roads.length;
+      const col=this._markColour(n);
+      const ox=this._pendingOuter.dx*sx, oy=this._pendingOuter.dy*sy;
+      ctx.beginPath();ctx.arc(ox,oy,8,0,Math.PI*2);
+      ctx.fillStyle=col+'99';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+      ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(String.fromCharCode(65+n),ox,oy);
+      // Pulsing ring
+      ctx.beginPath();ctx.arc(ox,oy,12,0,Math.PI*2);
+      ctx.strokeStyle=col+'66';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.stroke();ctx.setLineDash([]);
+    }
   }
 
   _updateMarkList(){
     const list=document.getElementById('markRoadList');
     list.innerHTML='';
-    this._markedPoints.forEach((p,i)=>{
+    this._roads.forEach((road,i)=>{
       const item=document.createElement('div');item.className='mark-road-item';
       const dot=document.createElement('span');dot.className='mark-road-dot';dot.style.background=this._markColour(i);
-      const lbl=document.createElement('span');lbl.textContent=`Road arm ${i+1}`;
+      const lbl=document.createElement('span');lbl.textContent=`Road ${String.fromCharCode(65+i)} → ${i+1}`;
       const rm=document.createElement('button');rm.className='mark-road-remove';rm.textContent='×';
-      rm.onclick=()=>{this._markedPoints.splice(i,1);this._redrawOverlay();this._updateMarkList();};
-      item.appendChild(dot);item.appendChild(lbl);item.appendChild(rm);
-      list.appendChild(item);
+      rm.onclick=()=>{
+        this._roads.splice(i,1);this._pendingOuter=null;
+        this._redrawOverlay();this._updateMarkList();this._updateMarkBadge();
+      };
+      item.appendChild(dot);item.appendChild(lbl);item.appendChild(rm);list.appendChild(item);
     });
+    if(this._pendingOuter){
+      const n=this._roads.length;
+      const item=document.createElement('div');item.className='mark-road-item';
+      const dot=document.createElement('span');dot.className='mark-road-dot';dot.style.background=this._markColour(n);
+      const lbl=document.createElement('span');lbl.textContent=`Road ${String.fromCharCode(65+n)} — click junction end`;lbl.style.fontStyle='italic';
+      item.appendChild(dot);item.appendChild(lbl);list.appendChild(item);
+    }
   }
 
   async _buildFromMarks(){
     const stage=document.getElementById('simStage');
     const W=stage.clientWidth||800, H=stage.clientHeight||600;
     const hasKey=!!document.getElementById('apiKeyInput').value.trim();
-    const hasMarks=this._markedPoints.length>=2;
-    if(hasMarks){
+    const minRoads=this._markingMode==='motorway'?1:2;
+    const hasRoads=this._roads.length>=minRoads;
+    if(hasRoads){
       this.network=this._buildFromMarkedPoints(W,H);
       this._finishSetup(W,H);
     }else if(hasKey){
       await this._runAIAnalysis(W,H);
     }else{
-      document.getElementById('hintText').textContent='⚠ Mark at least 2 road arms on the map, or add an API key for AI detection.';
+      document.getElementById('hintText').textContent=
+        this._markingMode==='motorway'
+          ? '⚠ Mark at least 1 slip road, or add an API key for AI detection.'
+          : '⚠ Mark at least 2 road arms (outer + junction end each), or add an API key.';
     }
   }
 

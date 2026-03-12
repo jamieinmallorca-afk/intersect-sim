@@ -69,9 +69,15 @@
     <!-- Road Marking Tool (shown after upload) -->
     <section class="mark-tool" id="markTool" style="display:none">
       <div class="mark-tool-title">📍 MARK ROADS</div>
-      <p class="mark-tool-instructions" id="markInstructions">
-        Click the <strong>outer end</strong> of a road (A, B, C…) then click where it <strong>meets the junction</strong> (1, 2, 3…). Repeat for each road arm.
-      </p>
+
+      <!-- Mode selector -->
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <button class="pill active" id="modeIntersection" style="flex:1;font-size:11px">⊕ Intersection</button>
+        <button class="pill" id="modeMotorway" style="flex:1;font-size:11px">⇉ Motorway</button>
+      </div>
+
+      <p class="mark-tool-instructions" id="markInstructions"></p>
+
       <div class="mark-mode-row" style="display:flex;gap:6px;margin-bottom:4px">
         <div class="mark-mode-badge" id="markModeBadge" style="
           background:var(--accent);color:#fff;padding:4px 10px;
@@ -85,7 +91,7 @@
         <button class="btn-mark-clear" id="btnMarkClear">✕ Clear</button>
       </div>
       <p style="font-size:10px;color:var(--text-muted);margin-top:4px">
-        No marks + API key = AI auto-detects. No marks + no key = fallback model.
+        No marks + API key = AI auto-detects.
       </p>
     </section>
 
