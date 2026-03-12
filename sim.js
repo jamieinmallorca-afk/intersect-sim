@@ -671,8 +671,109 @@ class AppController {
     this.network=null;this.simulation=null;this.renderer=null;this.graphRdr=null;
     this.animId=null;this.simTime=0;
     this.opts={volume:'medium',timeHour:8,signalTiming:'adaptive',ruleSystem:'uk',speed:1};
+    // Road marking tool state
+    this._markedPoints=[];   // [{x,y}] in preview image coords
+    this._imgNaturalW=1; this._imgNaturalH=1;
     this._bindUI();
   }
+
+  // ── Manual road marking colours ───────────────────────────
+  _markColour(i){
+    const cols=['#e53e3e','#d97706','#16a34a','#2563eb','#7c3aed','#db2777'];
+    return cols[i % cols.length];
+  }
+
+  // ── Build a network from manually-marked points ───────────
+  _buildFromMarkedPoints(canvasW, canvasH){
+    const pts = this._markedPoints;
+    if (pts.length < 2) return null;
+
+    // Scale marked points from preview image coords to canvas coords
+    const previewEl = document.getElementById('mapThumb');
+    const scaleX = canvasW / this._imgNaturalW;
+    const scaleY = canvasH / this._imgNaturalH;
+
+    const cx = canvasW / 2, cy = canvasH / 2;
+
+    // Each marked point is treated as a road arm endpoint
+    // Angle = from centre toward the marked point
+    const roads = pts.map((p, i) => {
+      const wx = p.x * scaleX;
+      const wy = p.y * scaleY;
+      const dx = wx - cx, dy = wy - cy;
+      const rad = Math.atan2(-dy, dx);   // canvas Y is inverted
+      const deg = ((rad * 180 / Math.PI) + 360) % 360;
+      const reach = Math.hypot(dx, dy);
+      return {
+        id: i, angleDeg: Math.round(deg), angleRad: rad,
+        lanesIn: 2, lanesOut: 2,
+        hasSignal: pts.length <= 4,   // add signals for 4-way or fewer
+        hasCrosswalk: false,
+        roadType: 'major',
+        ex: cx + Math.cos(rad) * reach,
+        ey: cy - Math.sin(rad) * reach,
+        ix: cx + Math.cos(rad) * 55,
+        iy: cy - Math.sin(rad) * 55,
+      };
+    });
+
+    // Detect if it looks like a motorway (user marked exactly 2 main roads
+    // with 2 extra slip road points = 4+ total roughly grouped in pairs)
+    const isMotorway = pts.length >= 4;
+
+    if (isMotorway) {
+      // Treat first 2 points as one main road, next 2 as second, etc.
+      // Pair opposite-ish points as same road
+      const sorted = [...roads].sort((a,b)=>a.angleDeg-b.angleDeg);
+      const mainRoads=[], seen=new Set();
+      for(let i=0;i<sorted.length;i++){
+        if(seen.has(i))continue;
+        let oppIdx=-1, minDiff=Infinity;
+        for(let j=i+1;j<sorted.length;j++){
+          if(seen.has(j))continue;
+          const diff=Math.abs(Math.abs(sorted[i].angleDeg-sorted[j].angleDeg)-180);
+          if(diff<minDiff){minDiff=diff;oppIdx=j;}
+        }
+        const r=sorted[i];
+        const len=Math.hypot(r.ex-cx,r.ey-cy);
+        if(oppIdx>=0){
+          const op=sorted[oppIdx]; seen.add(oppIdx);
+          mainRoads.push({id:mainRoads.length,name:`Road ${mainRoads.length+1}`,
+            angleRad:r.angleRad,angleDeg:r.angleDeg,lanesEachWay:2,
+            speedLimit:100,roadType:'motorway',
+            x1:r.ex,y1:r.ey,x2:op.ex,y2:op.ey});
+        }else{
+          mainRoads.push({id:mainRoads.length,name:`Road ${mainRoads.length+1}`,
+            angleRad:r.angleRad,angleDeg:r.angleDeg,lanesEachWay:2,
+            speedLimit:100,roadType:'motorway',
+            x1:cx-Math.cos(r.angleRad)*len,y1:cy+Math.sin(r.angleRad)*len,
+            x2:r.ex,y2:r.ey});
+        }
+        seen.add(i);
+      }
+      // Auto-generate slip roads between main road pairs
+      const slipRoads=[];
+      if(mainRoads.length>=2){
+        const mr0=mainRoads[0],mr1=mainRoads[1];
+        const mx=(mr0.x1+mr0.x2)/2,my=(mr0.y1+mr0.y2)/2;
+        const perp=mr0.angleRad+Math.PI/2;
+        slipRoads.push(
+          {id:0,type:'off-ramp',fromRoadId:0,toRoadId:1,hasMergeConflict:false,
+           bx:mx-60,by:my,tx:mx-60+90,ty:my-90,slipLen:120},
+          {id:1,type:'on-ramp', fromRoadId:1,toRoadId:0,hasMergeConflict:true,
+           bx:mx+60,by:my,tx:mx+60+90,ty:my-90,slipLen:120}
+        );
+      }
+      return {mode:'motorway',junctionType:'interchange',mainRoads,slipRoads,
+        cx,cy,speedLimit:100,features:['Manually marked motorway junction'],confidence:1.0};
+    }else{
+      // Standard intersection
+      const type=roads.length===3?'T-junction':roads.length===4?'4-way':'complex';
+      return {mode:'intersection',intersectionType:type,roads,cx,cy,reach:Math.min(canvasW,canvasH)*0.42,
+        hasCentralIsland:false,speedLimit:50,features:['Manually marked intersection'],confidence:1.0};
+    }
+  }
+
   _bindUI(){
     const zone=document.getElementById('uploadZone'),input=document.getElementById('fileInput');
     zone.addEventListener('click',()=>input.click());
@@ -681,11 +782,22 @@ class AppController {
     zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('drag-over');if(e.dataTransfer.files[0]?.type.startsWith('image/'))this._handleFile(e.dataTransfer.files[0]);});
     input.addEventListener('change',()=>{if(input.files[0])this._handleFile(input.files[0]);});
     document.getElementById('btnReupload').addEventListener('click',()=>{
-      ['previewSection','controlsSection','analysisSection'].forEach(id=>{document.getElementById(id).style.display='none';});
+      ['previewSection','markTool','controlsSection','analysisSection'].forEach(id=>{document.getElementById(id).style.display='none';});
       document.getElementById('uploadZone').style.display='';
       document.getElementById('btnExport').style.display='none';
+      this._markedPoints=[];
       this._stopSim();
     });
+
+    // Road marking tool
+    document.getElementById('mapPreviewWrap').addEventListener('click', e => this._onMapClick(e));
+    document.getElementById('btnBuild').addEventListener('click', () => this._buildFromMarks());
+    document.getElementById('btnMarkClear').addEventListener('click', () => {
+      this._markedPoints = [];
+      this._redrawOverlay();
+      document.getElementById('markRoadList').innerHTML = '';
+    });
+
     this._bindPills('volumeBtns','volume');this._bindPills('signalBtns','signalTiming');this._bindPills('ruleBtns','ruleSystem');
     const tsl=document.getElementById('timeSlider');
     tsl.addEventListener('input',()=>{
@@ -719,42 +831,129 @@ class AppController {
     const reader=new FileReader();
     reader.onload=async e=>{
       const dataUrl=e.target.result,base64=dataUrl.split(',')[1],mime=file.type;
+      this._pendingBase64=base64; this._pendingMime=mime;
+      // Store natural image dimensions for coordinate scaling
+      const img=new Image();
+      img.onload=()=>{ this._imgNaturalW=img.naturalWidth||800; this._imgNaturalH=img.naturalHeight||600; };
+      img.src=dataUrl;
       document.getElementById('mapThumb').src=dataUrl;
       document.getElementById('uploadZone').style.display='none';
       document.getElementById('previewSection').style.display='';
-      this._showOverlay('Sending to Claude AI…',10);
-      const stage=document.getElementById('simStage');
-      const W=stage.clientWidth||800,H=stage.clientHeight||600;
-      const prog=setInterval(()=>{
-        const cur=parseInt(document.getElementById('progressFill').style.width)||0;
-        if(cur<82)this._updateOverlay(null,cur+2);
-      },180);
-      try{
-        const apiKey=document.getElementById('apiKeyInput').value.trim();
-        this.network=await ImageAnalyser.analyse(base64,mime,W,H,apiKey);
-        clearInterval(prog);
-        const label=this.network.mode==='motorway'?'Motorway junction detected':'Intersection detected';
-        this._updateOverlay(label+'… building model',92);
-        await new Promise(r=>setTimeout(r,400));
-        this._updateOverlay('Ready!',100);
-        await new Promise(r=>setTimeout(r,500));
-        this._hideOverlay();
-        document.getElementById('signalBtns').closest('.control-group').style.display=this.network.mode==='motorway'?'none':'';
-        this._setupCanvas(W,H);this._showControls();this._showFeatures();
-        document.querySelector('.hint-text').textContent='';
-      }catch(err){
-        clearInterval(prog);this._hideOverlay();console.error(err);
-        const msg=err.message||String(err);
-        const isKey=msg.includes('401')||msg.includes('403')||msg.includes('authentication');
-        // Show full error in console AND hint text so we can diagnose it
-        console.error('FULL ERROR:', msg);
-        document.querySelector('.hint-text').textContent=isKey?'⚠ Invalid API key — using fallback':'⚠ '+msg;
-        this.network=ImageAnalyser.fallbackNetwork(W,H,false);
-        this._setupCanvas(W,H);this._showControls();this._showFeatures();
-      }
+      document.getElementById('markTool').style.display='';
+      this._markedPoints=[];
+      document.getElementById('markRoadList').innerHTML='';
+      setTimeout(()=>this._redrawOverlay(),50); // wait for img render
+      const hasKey=!!document.getElementById('apiKeyInput').value.trim();
+      document.getElementById('hintText').textContent=hasKey
+        ? 'Click road arms on the map to mark them, then Build — or just click Build for AI auto-detect.'
+        : 'No API key — click each road arm on the map above, then click Build.';
     };
     reader.readAsDataURL(file);
   }
+
+  _onMapClick(e){
+    const img=document.getElementById('mapThumb');
+    const imgRect=img.getBoundingClientRect();
+    const x=e.clientX-imgRect.left, y=e.clientY-imgRect.top;
+    if(x<0||y<0||x>imgRect.width||y>imgRect.height) return;
+    this._markedPoints.push({
+      // Natural image coords (for network building)
+      x: x*(this._imgNaturalW/imgRect.width),
+      y: y*(this._imgNaturalH/imgRect.height),
+      // Display coords (for overlay drawing)
+      dx: x, dy: y,
+    });
+    this._redrawOverlay();
+    this._updateMarkList();
+  }
+
+  _redrawOverlay(){
+    const img=document.getElementById('mapThumb');
+    const oc=document.getElementById('overlayCanvas');
+    oc.width=img.clientWidth||250; oc.height=img.clientHeight||160;
+    const ctx=oc.getContext('2d');
+    ctx.clearRect(0,0,oc.width,oc.height);
+    const cx=oc.width/2, cy=oc.height/2;
+    // Centre crosshair
+    ctx.strokeStyle='rgba(217,119,6,0.4)'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+    ctx.beginPath();ctx.moveTo(cx,0);ctx.lineTo(cx,oc.height);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(0,cy);ctx.lineTo(oc.width,cy);ctx.stroke();
+    ctx.setLineDash([]);
+    this._markedPoints.forEach((p,i)=>{
+      const col=this._markColour(i);
+      const sx=oc.width/(img.clientWidth||oc.width), sy=oc.height/(img.clientHeight||oc.height);
+      const dx=p.dx*sx, dy=p.dy*sy;
+      ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.setLineDash([5,4]);
+      ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(dx,dy);ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();ctx.arc(dx,dy,7,0,Math.PI*2);
+      ctx.fillStyle=col+'cc';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+      ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(i+1,dx,dy);
+    });
+  }
+
+  _updateMarkList(){
+    const list=document.getElementById('markRoadList');
+    list.innerHTML='';
+    this._markedPoints.forEach((p,i)=>{
+      const item=document.createElement('div');item.className='mark-road-item';
+      const dot=document.createElement('span');dot.className='mark-road-dot';dot.style.background=this._markColour(i);
+      const lbl=document.createElement('span');lbl.textContent=`Road arm ${i+1}`;
+      const rm=document.createElement('button');rm.className='mark-road-remove';rm.textContent='×';
+      rm.onclick=()=>{this._markedPoints.splice(i,1);this._redrawOverlay();this._updateMarkList();};
+      item.appendChild(dot);item.appendChild(lbl);item.appendChild(rm);
+      list.appendChild(item);
+    });
+  }
+
+  async _buildFromMarks(){
+    const stage=document.getElementById('simStage');
+    const W=stage.clientWidth||800, H=stage.clientHeight||600;
+    const hasKey=!!document.getElementById('apiKeyInput').value.trim();
+    const hasMarks=this._markedPoints.length>=2;
+    if(hasMarks){
+      this.network=this._buildFromMarkedPoints(W,H);
+      this._finishSetup(W,H);
+    }else if(hasKey){
+      await this._runAIAnalysis(W,H);
+    }else{
+      document.getElementById('hintText').textContent='⚠ Mark at least 2 road arms on the map, or add an API key for AI detection.';
+    }
+  }
+
+  async _runAIAnalysis(W,H){
+    this._showOverlay('Sending to Claude AI…',10);
+    const prog=setInterval(()=>{
+      const cur=parseInt(document.getElementById('progressFill').style.width)||0;
+      if(cur<82)this._updateOverlay(null,cur+2);
+    },180);
+    try{
+      const resized=await ImageAnalyser._resizeImage(this._pendingBase64,this._pendingMime);
+      this.network=await ImageAnalyser.analyse(resized.base64,resized.mimeType,W,H,
+        document.getElementById('apiKeyInput').value.trim());
+      clearInterval(prog);
+      this._updateOverlay(this.network.mode==='motorway'?'Motorway junction detected':'Intersection detected',96);
+      await new Promise(r=>setTimeout(r,500));
+      this._hideOverlay();
+      this._finishSetup(W,H);
+    }catch(err){
+      clearInterval(prog);this._hideOverlay();
+      console.error('AI analysis error:',err);
+      const msg=err.message||String(err);
+      document.getElementById('hintText').textContent='⚠ '+msg;
+    }
+  }
+
+  _finishSetup(W,H){
+    document.getElementById('markTool').style.display='none';
+    document.getElementById('signalBtns').closest('.control-group').style.display=
+      this.network.mode==='motorway'?'none':'';
+    this._setupCanvas(W,H);this._showControls();this._showFeatures();
+    document.getElementById('hintText').textContent='';
+  }
+
   _showOverlay(msg,pct){document.getElementById('analysisOverlay').style.display='flex';this._updateOverlay(msg,pct);}
   _updateOverlay(msg,pct){if(msg!==null)document.getElementById('overlayStatus').textContent=msg;if(pct!==null)document.getElementById('progressFill').style.width=pct+'%';}
   _hideOverlay(){document.getElementById('analysisOverlay').style.display='none';}

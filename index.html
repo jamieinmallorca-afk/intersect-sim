@@ -59,11 +59,29 @@
         <span class="label-tag">MAP LOADED</span>
         <button class="btn-ghost" id="btnReupload">Change ↺</button>
       </div>
-      <div class="map-preview-wrap">
+      <div class="map-preview-wrap" id="mapPreviewWrap">
         <img id="mapThumb" alt="Map preview"/>
         <canvas id="overlayCanvas"></canvas>
       </div>
-      <p class="hint-text">AI is analysing road structure…</p>
+      <p class="hint-text" id="hintText"></p>
+    </section>
+
+    <!-- Road Marking Tool (shown after upload) -->
+    <section class="mark-tool" id="markTool" style="display:none">
+      <div class="mark-tool-title">📍 MARK ROAD ARMS</div>
+      <p class="mark-tool-instructions">
+        Click on the map above to mark where each road enters the junction.
+        Click near the <strong>edge</strong> of each road arm.
+        Add 2–6 points then click Build.
+      </p>
+      <div class="mark-road-list" id="markRoadList"></div>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button class="btn-mark-build" id="btnBuild" style="flex:1">⬡ Build Simulation</button>
+        <button class="btn-mark-clear" id="btnMarkClear">✕ Clear</button>
+      </div>
+      <p style="font-size:10px;color:var(--text-muted);margin-top:4px">
+        Or skip marking — AI auto-detects if you have an API key.
+      </p>
     </section>
 
     <!-- Controls (shown after analysis) -->
