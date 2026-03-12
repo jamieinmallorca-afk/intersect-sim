@@ -61,7 +61,38 @@ const SPEED = {
 
 class ImageAnalyser {
 
+  /**
+   * Resize a base64 image to fit within maxW x maxH pixels.
+   * Returns { base64, mimeType } — always JPEG to minimise size.
+   */
+  static async _resizeImage(base64, mime, maxW=1120, maxH=1120) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        // Scale down if needed
+        const scale = Math.min(1, maxW / width, maxH / height);
+        width  = Math.round(width  * scale);
+        height = Math.round(height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width  = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        // Export as JPEG at 0.88 quality — much smaller than PNG
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+        resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
+      };
+      img.onerror = () => reject(new Error('Image load failed'));
+      img.src = `data:${mime};base64,${base64}`;
+    });
+  }
+
   static async analyse(imageBase64, mimeType, canvasW, canvasH, apiKey) {
+    // Always resize before sending — prevents 400 errors from oversized screenshots
+    const resized = await ImageAnalyser._resizeImage(imageBase64, mimeType);
+    imageBase64 = resized.base64;
+    mimeType    = resized.mimeType;
     const systemPrompt = `You are a traffic engineering AI that analyses road map screenshots.
 Determine whether the image shows:
   (a) an INTERSECTION/ROUNDABOUT — roads meeting at a point with signals or give-way rules
