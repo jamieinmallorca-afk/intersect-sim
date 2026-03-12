@@ -110,6 +110,45 @@ main {
   border-bottom: 1px solid var(--border);
 }
 
+/* ── API KEY INPUT ───────────────────────────────────────── */
+.apikey-section {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+#apiKeyInput {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+  letter-spacing: 1px;
+}
+#apiKeyInput:focus {
+  border-color: var(--accent);
+}
+#apiKeyInput::placeholder {
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+.apikey-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 7px;
+  line-height: 1.5;
+}
+.apikey-hint a {
+  color: var(--accent2);
+  text-decoration: none;
+}
+.apikey-hint a:hover { text-decoration: underline; }
+
 /* ── UPLOAD ZONE ─────────────────────────────────────────── */
 .upload-zone {
   border: 1.5px dashed var(--border);

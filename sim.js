@@ -61,7 +61,7 @@ class ImageAnalyser {
    * asking it to identify roads, lanes, intersection type, signals etc.
    * Returns a RoadNetwork object built from the JSON response.
    */
-  static async analyse(imageBase64, mimeType, canvasW, canvasH) {
+  static async analyse(imageBase64, mimeType, canvasW, canvasH, apiKey) {
 
     const systemPrompt = `You are a traffic engineering AI. 
 Analyse the provided map/satellite image of a road intersection.
@@ -101,7 +101,12 @@ The JSON must follow this schema exactly:
 
     const response = await fetch(ANTHROPIC_API, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 1000,
@@ -949,7 +954,8 @@ class AppController {
         const H     = stage.clientHeight || 600;
 
         this._updateOverlay('Analysing lane structure', 55);
-        this.network = await ImageAnalyser.analyse(base64, mime, W, H);
+        const apiKey = document.getElementById('apiKeyInput').value.trim();
+        this.network = await ImageAnalyser.analyse(base64, mime, W, H, apiKey);
         this._updateOverlay('Building simulation model', 80);
 
         await new Promise(r => setTimeout(r, 400));

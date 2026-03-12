@@ -29,6 +29,21 @@
   <!-- LEFT PANEL — Upload + Controls -->
   <aside class="panel panel-left" id="controlPanel">
 
+    <!-- API Key input -->
+    <section class="apikey-section">
+      <label class="control-label" style="display:block;margin-bottom:6px;">ANTHROPIC API KEY</label>
+      <input
+        type="password"
+        id="apiKeyInput"
+        placeholder="sk-ant-..."
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <p class="apikey-hint">Typed here only — never saved to GitHub.<br>
+        Get a key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+      </p>
+    </section>
+
     <section class="upload-zone" id="uploadZone">
       <div class="upload-inner" id="uploadInner">
         <div class="upload-icon">⊕</div>
