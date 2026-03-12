@@ -682,6 +682,8 @@ class AppController {
     // Clicking alternates: outer(A/B/C) then inner(1/2/3)
     this._roads = [];
     this._pendingOuter = null;
+    this._pendingInner = null;
+    this._motorwayLine = null;   // {p1, p2} — the two M clicks
     this._imgNaturalW=1; this._imgNaturalH=1;
     this._markingMode = 'intersection'; // 'intersection' | 'motorway'
     this._bindUI();
@@ -699,17 +701,29 @@ class AppController {
     const n=this._roads.length;
 
     if(this._markingMode==='motorway'){
-      instr.innerHTML='Click the <strong>outer end</strong> of a slip road (A, B…) then where it <strong>joins the motorway</strong> (1, 2…). The main carriageway is drawn automatically.';
-      if(this._pendingOuter){
-        badge.textContent=String(n+1);
-        badge.style.background=this._markColour(n);
-        label.textContent=`Click where slip road ${String.fromCharCode(65+n)} joins the motorway`;
+      if(!this._motorwayLine){
+        // Step 1: mark the motorway itself
+        instr.innerHTML='<strong>Step 1:</strong> Click one end of the <strong>main motorway</strong> (<strong>M</strong>), then the other end (<strong>M</strong>). This sets the carriageway direction.';
+        if(!this._pendingOuter){
+          badge.textContent='M'; badge.style.background='#1d4ed8';
+          label.textContent='Click one end of the motorway';
+        }else{
+          badge.textContent='M'; badge.style.background='#1d4ed8';
+          label.textContent='Now click the OTHER end of the motorway';
+        }
       }else{
-        badge.textContent=String.fromCharCode(65+n);
-        badge.style.background=n===0?'var(--accent)':this._markColour(n);
-        label.textContent=n===0
-          ?'Click the far end of the first slip road'
-          :`Click far end of slip road ${String.fromCharCode(65+n)} (or Build if done)`;
+        // Step 2: mark slip roads
+        instr.innerHTML='<strong>Step 2:</strong> For each slip road: click its <strong>tip</strong> (A, B…) then where it <strong>meets the motorway</strong> (1, 2…). Then choose exit or on-ramp.';
+        if(this._pendingOuter){
+          badge.textContent=String(n+1); badge.style.background=this._markColour(n);
+          label.textContent=`Click where slip ${String.fromCharCode(65+n)} meets the motorway`;
+        }else{
+          badge.textContent=String.fromCharCode(65+n);
+          badge.style.background=this._markColour(n);
+          label.textContent=n===0
+            ?'Click the tip of the first slip road'
+            :`Click tip of slip ${String.fromCharCode(65+n)} (or Build if done)`;
+        }
       }
     }else{
       instr.innerHTML='Click the <strong>outer end</strong> of a road (A, B, C…) then where it <strong>meets the junction</strong> (1, 2, 3…).';
@@ -734,22 +748,28 @@ class AppController {
     const sx=canvasW/this._imgNaturalW, sy=canvasH/this._imgNaturalH;
 
     if(this._markingMode==='motorway'){
-      // Main carriageway runs horizontally across the full canvas (can be rotated later)
-      // Detect angle from marked slip roads — use average angle of inner points relative to centre
-      let mainAngle=0;
-      if(roads.length>=2){
-        // Guess main road angle as perpendicular to the average slip road direction
+      let mainAngle=0, x1,y1,x2,y2;
+
+      if(this._motorwayLine){
+        // Use the explicitly marked M→M line
+        const p1=this._motorwayLine.p1, p2=this._motorwayLine.p2;
+        x1=p1.x*sx; y1=p1.y*sy;
+        x2=p2.x*sx; y2=p2.y*sy;
+        mainAngle=Math.atan2(-(y2-y1),(x2-x1));
+      }else{
+        // Fallback: guess from slip road inner points
         const avgDx=roads.reduce((s,r)=>s+(r.inner.x*sx-cx),0)/roads.length;
         const avgDy=roads.reduce((s,r)=>s+(r.inner.y*sy-cy),0)/roads.length;
         mainAngle=Math.atan2(-avgDy,avgDx)+Math.PI/2;
+        const len=Math.min(canvasW,canvasH)*0.48;
+        x1=cx-Math.cos(mainAngle)*len; y1=cy+Math.sin(mainAngle)*len;
+        x2=cx+Math.cos(mainAngle)*len; y2=cy-Math.sin(mainAngle)*len;
       }
-      const mainLen=Math.min(canvasW,canvasH)*0.48;
       const mainRoads=[{
         id:0, name:'Main Carriageway',
         angleRad:mainAngle, angleDeg:Math.round(((mainAngle*180/Math.PI)+360)%360),
         lanesEachWay:3, speedLimit:120, roadType:'motorway',
-        x1:cx-Math.cos(mainAngle)*mainLen, y1:cy+Math.sin(mainAngle)*mainLen,
-        x2:cx+Math.cos(mainAngle)*mainLen, y2:cy-Math.sin(mainAngle)*mainLen,
+        x1, y1, x2, y2,
       }];
 
       // Each marked pair becomes a slip road
@@ -761,7 +781,7 @@ class AppController {
         const slipLen=Math.hypot(ix-ox,iy-oy);
         // Determine if on-ramp or off-ramp by which side of main road the outer end is on
         const side=(ox-cx)*Math.sin(mainAngle)+(oy-cy)*Math.cos(mainAngle);
-        const type=i%2===0?'off-ramp':'on-ramp';
+        const type=road.type||'off-ramp';
         return {
           id:i, type,
           fromRoadId:0, toRoadId:0,
@@ -808,7 +828,7 @@ class AppController {
       ['previewSection','markTool','controlsSection','analysisSection'].forEach(id=>{document.getElementById(id).style.display='none';});
       document.getElementById('uploadZone').style.display='';
       document.getElementById('btnExport').style.display='none';
-      this._roads=[];this._pendingOuter=null;
+      this._roads=[];this._pendingOuter=null;this._motorwayLine=null;
       this._stopSim();
     });
 
@@ -816,7 +836,8 @@ class AppController {
     document.getElementById('mapPreviewWrap').addEventListener('click', e => this._onMapClick(e));
     document.getElementById('btnBuild').addEventListener('click', () => this._buildFromMarks());
     document.getElementById('btnMarkClear').addEventListener('click', () => {
-      this._roads=[];this._pendingOuter=null;
+      this._roads=[];this._pendingOuter=null;this._pendingInner=null;this._motorwayLine=null;
+      document.getElementById('slipTypePicker')?.remove();
       this._redrawOverlay();
       document.getElementById('markRoadList').innerHTML='';
       this._updateMarkBadge();
@@ -826,7 +847,8 @@ class AppController {
       this._markingMode='intersection';
       document.getElementById('modeIntersection').classList.add('active');
       document.getElementById('modeMotorway').classList.remove('active');
-      this._roads=[];this._pendingOuter=null;
+      this._roads=[];this._pendingOuter=null;this._motorwayLine=null;
+      document.getElementById('slipTypePicker')?.remove();
       this._redrawOverlay();document.getElementById('markRoadList').innerHTML='';
       this._updateMarkBadge();
     });
@@ -834,7 +856,8 @@ class AppController {
       this._markingMode='motorway';
       document.getElementById('modeMotorway').classList.add('active');
       document.getElementById('modeIntersection').classList.remove('active');
-      this._roads=[];this._pendingOuter=null;
+      this._roads=[];this._pendingOuter=null;this._motorwayLine=null;
+      document.getElementById('slipTypePicker')?.remove();
       this._redrawOverlay();document.getElementById('markRoadList').innerHTML='';
       this._updateMarkBadge();
     });
@@ -881,7 +904,8 @@ class AppController {
       document.getElementById('uploadZone').style.display='none';
       document.getElementById('previewSection').style.display='';
       document.getElementById('markTool').style.display='';
-      this._roads=[];this._pendingOuter=null;
+      this._roads=[];this._pendingOuter=null;this._pendingInner=null;this._motorwayLine=null;
+      document.getElementById('slipTypePicker')?.remove();
       document.getElementById('markRoadList').innerHTML='';
       setTimeout(()=>{this._redrawOverlay();this._updateMarkBadge();},50);
       const hasKey=!!document.getElementById('apiKeyInput').value.trim();
@@ -902,17 +926,64 @@ class AppController {
       y:y*(this._imgNaturalH/imgRect.height),
       dx:x, dy:y,
     };
+
+    // Motorway mode: first capture M→M before slip roads
+    if(this._markingMode==='motorway' && !this._motorwayLine){
+      if(!this._pendingOuter){
+        this._pendingOuter=pt;
+      }else{
+        this._motorwayLine={p1:this._pendingOuter, p2:pt};
+        this._pendingOuter=null;
+      }
+      this._redrawOverlay();
+      this._updateMarkBadge();
+      return;
+    }
+
     if(!this._pendingOuter){
-      // First click of a pair = outer end (A, B, C…)
       this._pendingOuter=pt;
     }else{
-      // Second click = inner end (1, 2, 3…)
-      this._roads.push({outer:this._pendingOuter, inner:pt});
+      if(this._markingMode==='motorway'){
+        this._pendingInner=pt;
+        this._redrawOverlay();
+        this._showSlipTypePicker();
+        return;
+      }
+      this._roads.push({outer:this._pendingOuter, inner:pt, type:'road'});
       this._pendingOuter=null;
     }
     this._redrawOverlay();
     this._updateMarkList();
     this._updateMarkBadge();
+  }
+
+  _showSlipTypePicker(){
+    const badge=document.getElementById('markModeBadge');
+    const label=document.getElementById('markModeLabel');
+    badge.textContent='?';
+    badge.style.background='#6b7280';
+    label.innerHTML='';
+    // Insert type buttons temporarily
+    const row=document.createElement('div');
+    row.id='slipTypePicker';
+    row.style.cssText='display:flex;gap:6px;margin-top:4px';
+    ['off-ramp','on-ramp'].forEach(type=>{
+      const btn=document.createElement('button');
+      btn.className='pill'; btn.style.flex='1'; btn.style.fontSize='11px';
+      btn.textContent=type==='off-ramp'?'↓ Exit (off-ramp)':'↑ Entry (on-ramp)';
+      btn.onclick=()=>{
+        this._roads.push({outer:this._pendingOuter, inner:this._pendingInner, type});
+        this._pendingOuter=null; this._pendingInner=null;
+        row.remove();
+        this._redrawOverlay();
+        this._updateMarkList();
+        this._updateMarkBadge();
+      };
+      row.appendChild(btn);
+    });
+    // Insert after badge row
+    const badge_row=document.getElementById('markModeBadge').parentElement;
+    badge_row.parentElement.insertBefore(row, badge_row.nextSibling);
   }
 
   _redrawOverlay(){
@@ -923,28 +994,51 @@ class AppController {
     ctx.clearRect(0,0,oc.width,oc.height);
     const sx=oc.width/(img.clientWidth||oc.width), sy=oc.height/(img.clientHeight||oc.height);
 
-    // Draw completed road pairs
+    // Draw M→M motorway line in blue
+    if(this._motorwayLine){
+      const mx1=this._motorwayLine.p1.dx*sx, my1=this._motorwayLine.p1.dy*sy;
+      const mx2=this._motorwayLine.p2.dx*sx, my2=this._motorwayLine.p2.dy*sy;
+      ctx.strokeStyle='#1d4ed8'; ctx.lineWidth=3; ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(mx1,my1);ctx.lineTo(mx2,my2);ctx.stroke();
+      // M dots at each end
+      [[mx1,my1],[mx2,my2]].forEach(([x,y])=>{
+        ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);
+        ctx.fillStyle='#1d4ed8cc';ctx.fill();
+        ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+        ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';
+        ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('M',x,y);
+      });
+    } else if(this._pendingOuter && this._markingMode==='motorway' && !this._motorwayLine){
+      // Pending first M click
+      const ox=this._pendingOuter.dx*sx, oy=this._pendingOuter.dy*sy;
+      ctx.beginPath();ctx.arc(ox,oy,8,0,Math.PI*2);
+      ctx.fillStyle='#1d4ed8aa';ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+      ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';
+      ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('M',ox,oy);
+    }
+
+    // Draw completed slip road pairs
     this._roads.forEach((road,i)=>{
       const col=this._markColour(i);
       const ox=road.outer.dx*sx, oy=road.outer.dy*sy;
       const ix=road.inner.dx*sx, iy=road.inner.dy*sy;
-      // Line from outer to inner
       ctx.strokeStyle=col; ctx.lineWidth=2; ctx.setLineDash([]);
       ctx.beginPath();ctx.moveTo(ox,oy);ctx.lineTo(ix,iy);ctx.stroke();
-      // Outer dot (A/B/C)
+      // Outer dot (letter)
       ctx.beginPath();ctx.arc(ox,oy,8,0,Math.PI*2);ctx.fillStyle=col+'bb';ctx.fill();
       ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
       ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
       ctx.fillText(String.fromCharCode(65+i),ox,oy);
-      // Inner dot (1/2/3) — square to distinguish
+      // Inner dot (number, square)
       ctx.fillStyle=col+'bb';ctx.strokeStyle='#fff';ctx.lineWidth=1.5;
       ctx.beginPath();ctx.roundRect(ix-6,iy-6,12,12,2);ctx.fill();ctx.stroke();
       ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
       ctx.fillText(String(i+1),ix,iy);
     });
 
-    // Draw pending outer point
-    if(this._pendingOuter){
+    // Pending outer slip road point
+    if(this._pendingOuter && !(this._markingMode==='motorway' && !this._motorwayLine)){
       const n=this._roads.length;
       const col=this._markColour(n);
       const ox=this._pendingOuter.dx*sx, oy=this._pendingOuter.dy*sy;
@@ -953,7 +1047,6 @@ class AppController {
       ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
       ctx.fillStyle='#fff';ctx.font='bold 9px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
       ctx.fillText(String.fromCharCode(65+n),ox,oy);
-      // Pulsing ring
       ctx.beginPath();ctx.arc(ox,oy,12,0,Math.PI*2);
       ctx.strokeStyle=col+'66';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.stroke();ctx.setLineDash([]);
     }
@@ -962,10 +1055,21 @@ class AppController {
   _updateMarkList(){
     const list=document.getElementById('markRoadList');
     list.innerHTML='';
+    // Show M→M motorway line if set
+    if(this._motorwayLine){
+      const item=document.createElement('div');item.className='mark-road-item';
+      const dot=document.createElement('span');dot.className='mark-road-dot';dot.style.background='#1d4ed8';
+      const lbl=document.createElement('span');lbl.textContent='Motorway M→M';lbl.style.fontWeight='600';
+      const rm=document.createElement('button');rm.className='mark-road-remove';rm.textContent='×';
+      rm.onclick=()=>{this._motorwayLine=null;this._redrawOverlay();this._updateMarkList();this._updateMarkBadge();};
+      item.appendChild(dot);item.appendChild(lbl);item.appendChild(rm);list.appendChild(item);
+    }
     this._roads.forEach((road,i)=>{
       const item=document.createElement('div');item.className='mark-road-item';
       const dot=document.createElement('span');dot.className='mark-road-dot';dot.style.background=this._markColour(i);
-      const lbl=document.createElement('span');lbl.textContent=`Road ${String.fromCharCode(65+i)} → ${i+1}`;
+      const lbl=document.createElement('span');
+      const typeLabel=road.type==='on-ramp'?'↑ on-ramp':road.type==='off-ramp'?'↓ off-ramp':'road';
+      lbl.textContent=`${String.fromCharCode(65+i)}→${i+1}  ${typeLabel}`;
       const rm=document.createElement('button');rm.className='mark-road-remove';rm.textContent='×';
       rm.onclick=()=>{
         this._roads.splice(i,1);this._pendingOuter=null;
