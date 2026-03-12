@@ -339,18 +339,23 @@ class Vehicle {
       this.path=[{ x:ex, y:ey, action:'DONE', speed:this.speed }];
 
     } else if (routeType==='exit') {
+      // Off-ramp: car travels along motorway then peels off down the slip to the tip
       const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if (!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const road=net.mainRoads.find(r=>r.id===slip.fromRoadId)||net.mainRoads[0];
       const perp=road.angleRad+Math.PI/2, off=LANE_W*0.5;
-      this.x=road.x1+Math.cos(perp)*off; this.y=road.y1-Math.sin(perp)*off;
+      // Spawn at whichever end of the main road is FURTHER from the branch point
+      const d1=Math.hypot(road.x1-slip.bx, road.y1-slip.by);
+      const d2=Math.hypot(road.x2-slip.bx, road.y2-slip.by);
+      const spawnX=(d1>d2?road.x1:road.x2), spawnY=(d1>d2?road.y1:road.y2);
+      this.x=spawnX+Math.cos(perp)*off; this.y=spawnY-Math.sin(perp)*off;
       this.speed=SPEED.motorwayMain;
       this.path=[
         { x:slip.bx+Math.cos(perp)*off, y:slip.by-Math.sin(perp)*off, action:'DECEL', speed:SPEED.motorwayMain },
         { x:slip.tx, y:slip.ty, action:'DONE', speed:SPEED.motorwaySlip },
       ];
 
-    } else { // enter
+    } else { // enter — on-ramp: car starts at tip, merges onto motorway, exits at far end
       const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if (!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const road=net.mainRoads.find(r=>r.id===slip.toRoadId)||net.mainRoads[0];
@@ -358,9 +363,13 @@ class Vehicle {
       this.x=slip.tx; this.y=slip.ty;
       this.mergeDelay=slip.hasMergeConflict?this.rules.conflictFactor*(1+Math.random()*2):0;
       this.speed=SPEED.motorwaySlip;
+      // After merging at bx/by, exit at whichever end of the main road is FURTHER from branch point
+      const d1=Math.hypot(road.x1-slip.bx, road.y1-slip.by);
+      const d2=Math.hypot(road.x2-slip.bx, road.y2-slip.by);
+      const exitX=(d1>d2?road.x1:road.x2), exitY=(d1>d2?road.y1:road.y2);
       this.path=[
         { x:slip.bx+Math.cos(perp)*off, y:slip.by-Math.sin(perp)*off, action:'MERGE', speed:SPEED.motorwaySlip },
-        { x:road.x2+Math.cos(perp)*off, y:road.y2-Math.sin(perp)*off, action:'DONE',  speed:SPEED.motorwayMain },
+        { x:exitX+Math.cos(perp)*off,   y:exitY-Math.sin(perp)*off,   action:'DONE',  speed:SPEED.motorwayMain },
       ];
     }
   }
@@ -549,10 +558,14 @@ class Renderer {
         ctx.beginPath();ctx.moveTo(15,0);ctx.lineTo(len-10,0);ctx.stroke();ctx.setLineDash([]);
       }
       ctx.restore();
-      // Direction arrow
-      const ax=slip.bx+dx*0.55,ay=slip.by+dy*0.55;
-      ctx.save();ctx.translate(ax,ay);ctx.rotate(angle);
-      ctx.fillStyle=slip.type==='on-ramp'||slip.type==='merge'?'#16a34a':'#d97706';
+      // Direction arrow — points in direction of vehicle travel
+      // off-ramp: bx(motorway) → tx(tip),  on-ramp: tx(tip) → bx(motorway)
+      const isOnRamp=slip.type==='on-ramp'||slip.type==='merge';
+      const ax=isOnRamp ? slip.tx-dx*0.45 : slip.bx+dx*0.55;
+      const ay=isOnRamp ? slip.ty-dy*0.45 : slip.by+dy*0.55;
+      const arrowAngle=isOnRamp ? Math.atan2(-dy,-dx) : angle;
+      ctx.save();ctx.translate(ax,ay);ctx.rotate(arrowAngle);
+      ctx.fillStyle=isOnRamp?'#16a34a':'#d97706';
       ctx.beginPath();ctx.moveTo(9,0);ctx.lineTo(-4,-5);ctx.lineTo(-4,5);ctx.closePath();ctx.fill();
       ctx.restore();
     });
@@ -774,20 +787,24 @@ class AppController {
 
       // Each marked pair becomes a slip road
       const slipRoads=roads.map((road,i)=>{
-        const ox=road.outer.x*sx, oy=road.outer.y*sy;
-        const ix=road.inner.x*sx, iy=road.inner.y*sy;
-        // Angle of slip road (outer→inner direction)
-        const slipAngle=Math.atan2(iy-oy,ix-ox);
+        const ox=road.outer.x*sx, oy=road.outer.y*sy;  // first click (A)
+        const ix=road.inner.x*sx, iy=road.inner.y*sy;  // second click (1)
         const slipLen=Math.hypot(ix-ox,iy-oy);
-        // Determine if on-ramp or off-ramp by which side of main road the outer end is on
-        const side=(ox-cx)*Math.sin(mainAngle)+(oy-cy)*Math.cos(mainAngle);
         const type=road.type||'off-ramp';
+        // Off-ramp: A = where car leaves motorway (branch), 1 = tip (destination)
+        //   → bx=outer(A), tx=inner(1)
+        // On-ramp:  A = tip (where car starts), 1 = where it joins motorway (branch)
+        //   → bx=inner(1), tx=outer(A)
+        const bx = type==='off-ramp' ? ox : ix;
+        const by = type==='off-ramp' ? oy : iy;
+        const tx = type==='off-ramp' ? ix : ox;
+        const ty = type==='off-ramp' ? iy : oy;
         return {
           id:i, type,
           fromRoadId:0, toRoadId:0,
           hasMergeConflict:type==='on-ramp',
-          bx:ix, by:iy,     // branch point on main road = inner click
-          tx:ox, ty:oy,     // tip of slip road = outer click
+          bx, by,   // branch point on main road
+          tx, ty,   // tip of slip road
           slipLen,
         };
       });
