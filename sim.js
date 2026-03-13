@@ -49,8 +49,10 @@ const RULE_SYSTEMS = {
 };
 
 const SPEED = {
-  motorwayMain: 4.2,
-  motorwaySlip: 2.1,
+  motorwayMain: 4.2,   // ~100 km/h base (fast lane)
+  motorwayMid:  3.8,   // ~90 km/h middle lane
+  motorwaySlow: 3.4,   // ~80 km/h slow lane (lane 0, rightmost)
+  motorwaySlip: 2.1,   // ~70 km/h slip roads / ramps
   urban:        1.8,
 };
 
@@ -327,25 +329,24 @@ class Vehicle {
     this.routeType=routeType;
 
     if (routeType==='through') {
-      // Pick a random carriageway — each has its own explicit direction (x1→x2)
+      // Pick a random carriageway road
       const road=net.mainRoads[Math.floor(Math.random()*net.mainRoads.length)];
       const perp=road.angleRad+Math.PI/2;
-      const lane=Math.floor(Math.random()*(road.lanes||3));
-      const laneOff=LANE_W*(lane+0.5)+4;
-      // All through vehicles on this road go x1→x2 (the direction the user clicked)
-      // Offset perpendicular to put them on the right side — since this IS one carriageway,
-      // we just spread lanes perpendicularly. No dir flipping needed.
-      // Use alternating sign so lanes spread to one side of the carriageway centre.
-      const side=(lane%2===0)?1:-1;
-      const off=laneOff*(lane===0?1:side)*0.5; // keep cars near centre of their carriageway
-      this.x=road.x1+Math.cos(perp)*off;
-      this.y=road.y1-Math.sin(perp)*off;
-      const ex=road.x2+Math.cos(perp)*off;
-      const ey=road.y2-Math.sin(perp)*off;
-      this.speed=SPEED.motorwayMain*(0.85+Math.random()*0.3);
+      const MOTORWAY_LANES=3;
+      const cW=MOTORWAY_LANES*LANE_W;
+      // Lane 0 = slow (rightmost = +perp edge), lane 2 = fast (leftmost = -perp edge)
+      // In local coords: lane 0 centre = cW/2 - LANE_W*0.5, lane 2 = -cW/2 + LANE_W*0.5
+      const lane=Math.floor(Math.random()*MOTORWAY_LANES);
+      const localY = cW/2 - LANE_W*(lane+0.5); // +ve = right/slow, -ve = left/fast
+      const laneSpeed = lane===0 ? SPEED.motorwaySlow : lane===1 ? SPEED.motorwayMid : SPEED.motorwayMain;
+      const off_x = Math.cos(perp)*localY;
+      const off_y = -Math.sin(perp)*localY;
+      this.x=road.x1+off_x; this.y=road.y1+off_y;
+      const ex=road.x2+off_x, ey=road.y2+off_y;
+      this.speed=laneSpeed*(0.9+Math.random()*0.2);
       this.angle=Math.atan2(ey-this.y, ex-this.x);
-      this.routeDir=road.id; // use road id as the "direction" identifier
-      this.roadId=road.id; this.isOnSlip=false;
+      this.routeDir=road.id; this.roadId=road.id; this.isOnSlip=false;
+      this.laneIdx=lane;
       this.path=[{x:ex, y:ey, action:'DONE', speed:this.speed}];
 
     } else if (routeType==='exit') {
@@ -546,14 +547,14 @@ class Renderer {
 
   _motorway(){
     const ctx=this.ctx,net=this.network;
-    const lanes=3; // lanes per carriageway
-    const cW=lanes*LANE_W; // carriageway width
+    const MOTORWAY_LANES=3; // always 3 lanes per carriageway on Spanish motorway
+    const cW=MOTORWAY_LANES*LANE_W; // total carriageway width
     net.mainRoads.forEach(road=>{
       const len=Math.hypot(road.x2-road.x1,road.y2-road.y1);
       ctx.save();ctx.translate(road.x1,road.y1);ctx.rotate(-road.angleRad);
       // Verge
       ctx.fillStyle='#c8d8b8';ctx.fillRect(-10,-cW/2-16,len+20,cW+32);
-      // Road surface (single carriageway centred on the line)
+      // Road surface
       ctx.fillStyle='#7a8599';ctx.fillRect(0,-cW/2,len,cW);
       // Edge lines
       ctx.strokeStyle='rgba(255,255,255,0.95)';ctx.lineWidth=2;ctx.setLineDash([]);
@@ -561,12 +562,12 @@ class Renderer {
       ctx.beginPath();ctx.moveTo(0,cW/2);ctx.lineTo(len,cW/2);ctx.stroke();
       // Lane dashes
       ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=1.2;ctx.setLineDash([20,14]);
-      for(let l=1;l<lanes;l++){
+      for(let l=1;l<MOTORWAY_LANES;l++){
         const ly=-cW/2+l*LANE_W;
         ctx.beginPath();ctx.moveTo(0,ly);ctx.lineTo(len,ly);ctx.stroke();
       }
       ctx.setLineDash([]);
-      // Direction arrows (all pointing forward = +x = x1→x2 direction the user clicked)
+      // Direction arrows (all pointing forward = x1→x2 = the direction user clicked)
       ctx.fillStyle='rgba(255,255,255,0.3)';
       for(let d=120;d<len-20;d+=120){
         ctx.save();ctx.translate(d,0);
