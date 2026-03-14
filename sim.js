@@ -336,7 +336,7 @@ class Vehicle {
       if(road._drawOx!==undefined) return {ox:road._drawOx, oy:road._drawOy};
       const perp=road.angleRad+Math.PI/2;
       const sign=road.id===0?1:-1;
-      const centreOff=sign*(cW/2+RESERVATION/2);
+      const centreOff=sign*(cW+RESERVATION/2);
       return {ox:Math.cos(perp)*centreOff, oy:Math.sin(perp)*centreOff};
     };
 
@@ -577,7 +577,7 @@ class Renderer {
       const perp=road.angleRad+Math.PI/2;
       const sign=sideSign(road);
       // Offset from clicked line to carriageway centre
-      const centreOff = sign*(cW/2 + RESERVATION/2);
+      const centreOff = sign*(cW + RESERVATION/2);
       const ox=Math.cos(perp)*centreOff, oy=Math.sin(perp)*centreOff;
 
       ctx.save();
