@@ -327,20 +327,30 @@ class Vehicle {
   _initMotorway({routeType, mainRoadId, slipId}) {
     const net=this.network;
     this.routeType=routeType;
+    const MOTORWAY_LANES=3;
+    const cW=MOTORWAY_LANES*LANE_W;
+    const RESERVATION=8;
+
+    // Helper: get the draw offset for a road (set by renderer, or compute it fresh)
+    const drawOff=(road)=>{
+      if(road._drawOx!==undefined) return {ox:road._drawOx, oy:road._drawOy};
+      const perp=road.angleRad+Math.PI/2;
+      const sign=road.id===0?1:-1;
+      const centreOff=sign*(cW/2+RESERVATION/2);
+      return {ox:Math.cos(perp)*centreOff, oy:Math.sin(perp)*centreOff};
+    };
 
     if (routeType==='through') {
       const road=net.mainRoads[Math.floor(Math.random()*net.mainRoads.length)];
       const perp=road.angleRad+Math.PI/2;
-      const MOTORWAY_LANES=3;
-      const cW=MOTORWAY_LANES*LANE_W;
+      const {ox:dox, oy:doy}=drawOff(road);
       const lane=Math.floor(Math.random()*MOTORWAY_LANES);
-      // In renderer local coords (rotated), lane 0 = y near +cW/2, lane 2 = y near -cW/2
-      // localY mapped to canvas via perp vector: (cos(perp), sin(perp))
-      const localY = cW/2 - LANE_W*(lane+0.5);
-      const laneSpeed = lane===0 ? SPEED.motorwaySlow : lane===1 ? SPEED.motorwayMid : SPEED.motorwayMain;
-      const ox=Math.cos(perp)*localY, oy=Math.sin(perp)*localY;
-      this.x=road.x1+ox; this.y=road.y1+oy;
-      const ex=road.x2+ox, ey=road.y2+oy;
+      // localY: within the carriageway, lane 0 = near +cW/2, lane 2 = near -cW/2
+      const localY=cW/2-LANE_W*(lane+0.5);
+      const laneSpeed=lane===0?SPEED.motorwaySlow:lane===1?SPEED.motorwayMid:SPEED.motorwayMain;
+      const lox=Math.cos(perp)*localY, loy=Math.sin(perp)*localY;
+      this.x=road.x1+dox+lox; this.y=road.y1+doy+loy;
+      const ex=road.x2+dox+lox, ey=road.y2+doy+loy;
       this.speed=laneSpeed*(0.9+Math.random()*0.2);
       this.angle=Math.atan2(ey-this.y, ex-this.x);
       this.routeDir=road.id; this.roadId=road.id; this.isOnSlip=false;
@@ -351,18 +361,17 @@ class Vehicle {
       const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if (!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const road=net.mainRoads.find(r=>r.id===slip.fromRoadId)||net.mainRoads[0];
-      const perp=road.angleRad+Math.PI/2;
+      const {ox:dox, oy:doy}=drawOff(road);
       const d1=Math.hypot(road.x1-slip.bx, road.y1-slip.by);
       const d2=Math.hypot(road.x2-slip.bx, road.y2-slip.by);
-      const spx=(d1>d2?road.x1:road.x2), spy=(d1>d2?road.y1:road.y2);
-      const off=LANE_W*0.5;
-      const ox=Math.cos(perp)*off, oy=Math.sin(perp)*off;
-      this.x=spx+ox; this.y=spy+oy;
+      const spx=(d1>d2?road.x1:road.x2)+dox, spy=(d1>d2?road.y1:road.y2)+doy;
+      this.x=spx; this.y=spy;
       this.speed=SPEED.motorwayMain;
       this.routeDir=road.id; this.roadId=road.id; this.isOnSlip=false;
+      const bpx=slip.bx+dox, bpy=slip.by+doy;
       const curve=slip.curve||[];
       this.path=[
-        {x:slip.bx+ox, y:slip.by+oy, action:'DECEL', speed:SPEED.motorwayMain},
+        {x:bpx, y:bpy, action:'DECEL', speed:SPEED.motorwayMain},
         ...curve.map(p=>({x:p.x, y:p.y, action:'MOVING', speed:SPEED.motorwaySlip})),
         {x:slip.tx, y:slip.ty, action:'DONE', speed:SPEED.motorwaySlip},
       ];
@@ -371,12 +380,11 @@ class Vehicle {
       const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if (!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const road=net.mainRoads.find(r=>r.id===slip.toRoadId)||net.mainRoads[0];
-      const perp=road.angleRad+Math.PI/2;
+      const {ox:dox, oy:doy}=drawOff(road);
       const d1=Math.hypot(road.x1-slip.bx, road.y1-slip.by);
       const d2=Math.hypot(road.x2-slip.bx, road.y2-slip.by);
-      const exitX=(d1>d2?road.x1:road.x2), exitY=(d1>d2?road.y1:road.y2);
-      const off=LANE_W*0.5;
-      const ox=Math.cos(perp)*off, oy=Math.sin(perp)*off;
+      const exitX=(d1>d2?road.x1:road.x2)+dox, exitY=(d1>d2?road.y1:road.y2)+doy;
+      const bpx=slip.bx+dox, bpy=slip.by+doy;
       this.x=slip.tx; this.y=slip.ty;
       this.mergeDelay=slip.hasMergeConflict?this.rules.conflictFactor*(1+Math.random()*2):0;
       this.speed=SPEED.motorwaySlip;
@@ -384,8 +392,8 @@ class Vehicle {
       const curve=slip.curve||[];
       this.path=[
         ...[...curve].reverse().map(p=>({x:p.x, y:p.y, action:'MOVING', speed:SPEED.motorwaySlip})),
-        {x:slip.bx+ox, y:slip.by+oy, action:'MERGE', speed:SPEED.motorwaySlip},
-        {x:exitX+ox,   y:exitY+oy,   action:'DONE',  speed:SPEED.motorwayMain},
+        {x:bpx, y:bpy, action:'MERGE', speed:SPEED.motorwaySlip},
+        {x:exitX, y:exitY, action:'DONE', speed:SPEED.motorwayMain},
       ];
     }
   }
@@ -545,13 +553,36 @@ class Renderer {
 
   _motorway(){
     const ctx=this.ctx,net=this.network;
-    const MOTORWAY_LANES=3; // always 3 lanes per carriageway on Spanish motorway
-    const cW=MOTORWAY_LANES*LANE_W; // total carriageway width
+    const MOTORWAY_LANES=3;
+    const cW=MOTORWAY_LANES*LANE_W;   // width of one carriageway = 42px
+    const RESERVATION=8;              // central reservation gap
+    // Each carriageway is drawn offset from its clicked centreline:
+    //   road id=0 (A): offset LEFT of travel direction  (+perp)
+    //   road id=1 (B): offset RIGHT of travel direction (-perp)
+    // Both end up flanking the centreline with the reservation between them.
+    const sideSign=(road)=> road.id===0 ? 1 : -1;
+
+    // Draw verge behind both carriageways first (one big slab)
+    if(net.mainRoads.length>=2){
+      const rA=net.mainRoads[0], rB=net.mainRoads[1];
+      const totalW=cW*2+RESERVATION+32;
+      const len=Math.hypot(rA.x2-rA.x1,rA.y2-rA.y1);
+      ctx.save();ctx.translate(rA.x1,rA.y1);ctx.rotate(rA.angleRad);
+      ctx.fillStyle='#c8d8b8';ctx.fillRect(-10,-totalW/2-4,len+20,totalW+8);
+      ctx.restore();
+    }
+
     net.mainRoads.forEach(road=>{
       const len=Math.hypot(road.x2-road.x1,road.y2-road.y1);
-      ctx.save();ctx.translate(road.x1,road.y1);ctx.rotate(road.angleRad);
-      // Verge
-      ctx.fillStyle='#c8d8b8';ctx.fillRect(-10,-cW/2-16,len+20,cW+32);
+      const perp=road.angleRad+Math.PI/2;
+      const sign=sideSign(road);
+      // Offset from clicked line to carriageway centre
+      const centreOff = sign*(cW/2 + RESERVATION/2);
+      const ox=Math.cos(perp)*centreOff, oy=Math.sin(perp)*centreOff;
+
+      ctx.save();
+      ctx.translate(road.x1+ox, road.y1+oy);
+      ctx.rotate(road.angleRad);
       // Road surface
       ctx.fillStyle='#7a8599';ctx.fillRect(0,-cW/2,len,cW);
       // Edge lines
@@ -565,7 +596,7 @@ class Renderer {
         ctx.beginPath();ctx.moveTo(0,ly);ctx.lineTo(len,ly);ctx.stroke();
       }
       ctx.setLineDash([]);
-      // Direction arrows (all pointing forward = x1→x2 = the direction user clicked)
+      // Direction arrows
       ctx.fillStyle='rgba(255,255,255,0.3)';
       for(let d=120;d<len-20;d+=120){
         ctx.save();ctx.translate(d,0);
@@ -573,32 +604,58 @@ class Renderer {
         ctx.restore();
       }
       ctx.restore();
-    });
-    // Slip roads — drawn as polylines through user-marked points
-    net.slipRoads.forEach(slip=>{
-      const pts=slip.renderPts||[{x:slip.bx,y:slip.by},{x:slip.tx,y:slip.ty}];
-      if(pts.length<2)return;
-      const slipW=LANE_W+4;
 
-      // Build a smooth path through all points
+      // Store the actual drawn centreline on the road object so vehicles & slips can use it
+      road._drawOx=ox; road._drawOy=oy;
+    });
+
+    // Central reservation stripe between the two carriageways
+    if(net.mainRoads.length>=2){
+      const rA=net.mainRoads[0];
+      const len=Math.hypot(rA.x2-rA.x1,rA.y2-rA.y1);
+      ctx.save();ctx.translate(rA.x1,rA.y1);ctx.rotate(rA.angleRad);
+      ctx.fillStyle='#b0c4a0';ctx.fillRect(0,-RESERVATION/2,len,RESERVATION);
+      ctx.strokeStyle='rgba(100,140,90,0.6)';ctx.lineWidth=1;
+      for(let x=0;x<len;x+=18){ctx.beginPath();ctx.moveTo(x,-RESERVATION/2);ctx.lineTo(x+9,RESERVATION/2);ctx.stroke();}
+      ctx.restore();
+    }
+
+    // Slip roads — polyline, but snap the motorway-join end to the carriageway edge
+    net.slipRoads.forEach(slip=>{
+      const road=net.mainRoads.find(r=>r.id===slip.fromRoadId)||net.mainRoads.find(r=>r.id===slip.toRoadId)||net.mainRoads[0];
+      const dox=road._drawOx||0, doy=road._drawOy||0;
+
+      // Snap the branch point (bx,by) to the drawn carriageway position
+      const sbx=slip.bx+dox, sby=slip.by+doy;
+
+      // Rebuild renderPts with the snapped branch point
+      let pts=slip.renderPts ? [...slip.renderPts] : [{x:slip.bx,y:slip.by},{x:slip.tx,y:slip.ty}];
+      // The motorway-join end is the LAST point for off-ramp, FIRST for on-ramp
+      if(slip.type==='off-ramp'){
+        // off-ramp: outer(A) = branch on motorway (first pt), inner = tip (last pt)
+        pts[0]={x:sbx,y:sby};
+      } else {
+        // on-ramp: last point is the branch join onto motorway
+        pts[pts.length-1]={x:sbx,y:sby};
+      }
+      if(pts.length<2)return;
+
+      const slipW=LANE_W+6;
       ctx.save();
-      // Verge/shadow
       ctx.strokeStyle='#b8c8a8'; ctx.lineWidth=slipW+10; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.setLineDash([]);
       ctx.beginPath(); pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)); ctx.stroke();
-      // Road surface
       ctx.strokeStyle='#9aa0ad'; ctx.lineWidth=slipW;
       ctx.beginPath(); pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)); ctx.stroke();
-      // Edge highlight
-      ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1;
+      ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1.2;
       ctx.beginPath(); pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)); ctx.stroke();
       ctx.restore();
 
-      // Label near midpoint
+      // Label
       const mid=pts[Math.floor(pts.length/2)];
       ctx.fillStyle='rgba(40,40,40,0.7)';ctx.font='9px monospace';ctx.textAlign='left';
       ctx.fillText(slip.type, mid.x+4, mid.y-6);
 
-      // Direction arrow at ~55% along path
+      // Direction arrow
       const totalSegs=pts.length-1;
       const targetSeg=Math.floor(totalSegs*0.55);
       const p0=pts[Math.min(targetSeg,pts.length-2)];
