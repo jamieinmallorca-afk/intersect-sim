@@ -329,20 +329,18 @@ class Vehicle {
     this.routeType=routeType;
 
     if (routeType==='through') {
-      // Pick a random carriageway road
       const road=net.mainRoads[Math.floor(Math.random()*net.mainRoads.length)];
       const perp=road.angleRad+Math.PI/2;
       const MOTORWAY_LANES=3;
       const cW=MOTORWAY_LANES*LANE_W;
-      // Lane 0 = slow (rightmost = +perp edge), lane 2 = fast (leftmost = -perp edge)
-      // In local coords: lane 0 centre = cW/2 - LANE_W*0.5, lane 2 = -cW/2 + LANE_W*0.5
       const lane=Math.floor(Math.random()*MOTORWAY_LANES);
-      const localY = cW/2 - LANE_W*(lane+0.5); // +ve = right/slow, -ve = left/fast
+      // In renderer local coords (rotated), lane 0 = y near +cW/2, lane 2 = y near -cW/2
+      // localY mapped to canvas via perp vector: (cos(perp), sin(perp))
+      const localY = cW/2 - LANE_W*(lane+0.5);
       const laneSpeed = lane===0 ? SPEED.motorwaySlow : lane===1 ? SPEED.motorwayMid : SPEED.motorwayMain;
-      const off_x = Math.cos(perp)*localY;
-      const off_y = -Math.sin(perp)*localY;
-      this.x=road.x1+off_x; this.y=road.y1+off_y;
-      const ex=road.x2+off_x, ey=road.y2+off_y;
+      const ox=Math.cos(perp)*localY, oy=Math.sin(perp)*localY;
+      this.x=road.x1+ox; this.y=road.y1+oy;
+      const ex=road.x2+ox, ey=road.y2+oy;
       this.speed=laneSpeed*(0.9+Math.random()*0.2);
       this.angle=Math.atan2(ey-this.y, ex-this.x);
       this.routeDir=road.id; this.roadId=road.id; this.isOnSlip=false;
@@ -354,18 +352,17 @@ class Vehicle {
       if (!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const road=net.mainRoads.find(r=>r.id===slip.fromRoadId)||net.mainRoads[0];
       const perp=road.angleRad+Math.PI/2;
-      // Spawn at the far end of this carriageway from the branch point
       const d1=Math.hypot(road.x1-slip.bx, road.y1-slip.by);
       const d2=Math.hypot(road.x2-slip.bx, road.y2-slip.by);
       const spx=(d1>d2?road.x1:road.x2), spy=(d1>d2?road.y1:road.y2);
-      // Small lateral offset to sit in lane
       const off=LANE_W*0.5;
-      this.x=spx+Math.cos(perp)*off; this.y=spy-Math.sin(perp)*off;
+      const ox=Math.cos(perp)*off, oy=Math.sin(perp)*off;
+      this.x=spx+ox; this.y=spy+oy;
       this.speed=SPEED.motorwayMain;
       this.routeDir=road.id; this.roadId=road.id; this.isOnSlip=false;
       const curve=slip.curve||[];
       this.path=[
-        {x:slip.bx+Math.cos(perp)*off, y:slip.by-Math.sin(perp)*off, action:'DECEL', speed:SPEED.motorwayMain},
+        {x:slip.bx+ox, y:slip.by+oy, action:'DECEL', speed:SPEED.motorwayMain},
         ...curve.map(p=>({x:p.x, y:p.y, action:'MOVING', speed:SPEED.motorwaySlip})),
         {x:slip.tx, y:slip.ty, action:'DONE', speed:SPEED.motorwaySlip},
       ];
@@ -379,6 +376,7 @@ class Vehicle {
       const d2=Math.hypot(road.x2-slip.bx, road.y2-slip.by);
       const exitX=(d1>d2?road.x1:road.x2), exitY=(d1>d2?road.y1:road.y2);
       const off=LANE_W*0.5;
+      const ox=Math.cos(perp)*off, oy=Math.sin(perp)*off;
       this.x=slip.tx; this.y=slip.ty;
       this.mergeDelay=slip.hasMergeConflict?this.rules.conflictFactor*(1+Math.random()*2):0;
       this.speed=SPEED.motorwaySlip;
@@ -386,8 +384,8 @@ class Vehicle {
       const curve=slip.curve||[];
       this.path=[
         ...[...curve].reverse().map(p=>({x:p.x, y:p.y, action:'MOVING', speed:SPEED.motorwaySlip})),
-        {x:slip.bx+Math.cos(perp)*off, y:slip.by-Math.sin(perp)*off, action:'MERGE', speed:SPEED.motorwaySlip},
-        {x:exitX+Math.cos(perp)*off,   y:exitY-Math.sin(perp)*off,   action:'DONE',  speed:SPEED.motorwayMain},
+        {x:slip.bx+ox, y:slip.by+oy, action:'MERGE', speed:SPEED.motorwaySlip},
+        {x:exitX+ox,   y:exitY+oy,   action:'DONE',  speed:SPEED.motorwayMain},
       ];
     }
   }
@@ -551,7 +549,7 @@ class Renderer {
     const cW=MOTORWAY_LANES*LANE_W; // total carriageway width
     net.mainRoads.forEach(road=>{
       const len=Math.hypot(road.x2-road.x1,road.y2-road.y1);
-      ctx.save();ctx.translate(road.x1,road.y1);ctx.rotate(-road.angleRad);
+      ctx.save();ctx.translate(road.x1,road.y1);ctx.rotate(road.angleRad);
       // Verge
       ctx.fillStyle='#c8d8b8';ctx.fillRect(-10,-cW/2-16,len+20,cW+32);
       // Road surface
@@ -810,14 +808,13 @@ class AppController {
     if(this._markingMode==='motorway'){
       if(!this._motorwayA || !this._motorwayB) return null;
 
-      const makeRoad=(line, id, sx, sy)=>({
-        id,
-        name: id===0?'Carriageway A':'Carriageway B',
-        x1: line.p1.x*sx, y1: line.p1.y*sy,
-        x2: line.p2.x*sx, y2: line.p2.y*sy,
-        angleRad: Math.atan2(-(line.p2.y*sy - line.p1.y*sy),(line.p2.x*sx - line.p1.x*sx)),
-        lanesEachWay:1, lanes:3, speedLimit:120, roadType:'motorway',
-      });
+      const makeRoad=(line, id, sx, sy)=>{
+        const x1=line.p1.x*sx, y1=line.p1.y*sy;
+        const x2=line.p2.x*sx, y2=line.p2.y*sy;
+        const angleRad=Math.atan2(y2-y1, x2-x1); // raw screen angle, x1→x2 direction
+        return { id, name: id===0?'Carriageway A':'Carriageway B',
+          x1, y1, x2, y2, angleRad, speedLimit:120, roadType:'motorway' };
+      };
 
       const mainRoads=[
         makeRoad(this._motorwayA, 0, sx, sy),
