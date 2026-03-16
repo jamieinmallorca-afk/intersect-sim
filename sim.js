@@ -330,54 +330,44 @@ class Vehicle {
     const LANES=3;
     const laneSpd=l=>l===0?SPEED.motorwaySlow:l===1?SPEED.motorwayMid:SPEED.motorwayMain;
     const laneOff=(road,lane)=>{
-      const perp=road.angleRad+Math.PI/2;
-      const d=(lane-(LANES-1)/2)*LANE_W;
+      const perp=road.angleRad+Math.PI/2,d=(lane-(LANES-1)/2)*LANE_W;
       return {ox:Math.cos(perp)*d,oy:Math.sin(perp)*d};
     };
-
     if(routeType==='through'){
       const road=net.mainRoads[Math.floor(Math.random()*net.mainRoads.length)];
       const pts=road.polyline||[{x:road.x1,y:road.y1},{x:road.x2,y:road.y2}];
-      const lane=Math.floor(Math.random()*LANES);
-      const spd=laneSpd(lane)*(0.9+Math.random()*0.2);
+      const lane=Math.floor(Math.random()*LANES),spd=laneSpd(lane)*(0.9+Math.random()*0.2);
       const {ox,oy}=laneOff(road,lane);
-      this.x=pts[0].x+ox; this.y=pts[0].y+oy;
-      this.speed=spd; this.laneIdx=lane;
-      this.routeDir=road.id; this.roadId=road.id; this.isOnSlip=false;
+      this.x=pts[0].x+ox;this.y=pts[0].y+oy;this.speed=spd;this.laneIdx=lane;
+      this.routeDir=road.id;this.roadId=road.id;this.isOnSlip=false;
       this.angle=pts.length>1?Math.atan2(pts[1].y-pts[0].y,pts[1].x-pts[0].x):0;
       this.path=pts.slice(1).map((p,i,a)=>({x:p.x+ox,y:p.y+oy,action:i===a.length-1?'DONE':'MOVING',speed:spd}));
-
     }else if(routeType==='exit'){
       const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if(!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const road=net.mainRoads.find(r=>r.id===slip.fromRoadId)||net.mainRoads[0];
       const pts=road.polyline||[{x:road.x1,y:road.y1},{x:road.x2,y:road.y2}];
       const {ox,oy}=laneOff(road,0);
-      const d0=Math.hypot(pts[0].x-slip.bx,pts[0].y-slip.by);
-      const dN=Math.hypot(pts[pts.length-1].x-slip.bx,pts[pts.length-1].y-slip.by);
-      const spawn=d0>dN?pts[0]:pts[pts.length-1];
-      this.x=spawn.x+ox; this.y=spawn.y+oy; this.speed=SPEED.motorwayMain;
-      this.routeDir=road.id; this.roadId=road.id; this.isOnSlip=false;
+      const spawn=Math.hypot(pts[0].x-slip.bx,pts[0].y-slip.by)>Math.hypot(pts[pts.length-1].x-slip.bx,pts[pts.length-1].y-slip.by)?pts[0]:pts[pts.length-1];
+      this.x=spawn.x+ox;this.y=spawn.y+oy;this.speed=SPEED.motorwayMain;
+      this.routeDir=road.id;this.roadId=road.id;this.isOnSlip=false;
       const curve=slip.curve||[];
       this.path=[
         {x:slip.bx,y:slip.by,action:'DECEL',speed:SPEED.motorwayMain},
         ...curve.map(p=>({x:p.x,y:p.y,action:'MOVING',speed:SPEED.motorwaySlip})),
         {x:slip.tx,y:slip.ty,action:'DONE',speed:SPEED.motorwaySlip},
       ];
-
-    }else{ // on-ramp
+    }else{
       const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if(!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const road=net.mainRoads.find(r=>r.id===slip.toRoadId)||net.mainRoads[0];
       const pts=road.polyline||[{x:road.x1,y:road.y1},{x:road.x2,y:road.y2}];
       const {ox,oy}=laneOff(road,0);
-      const d0=Math.hypot(pts[0].x-slip.bx,pts[0].y-slip.by);
-      const dN=Math.hypot(pts[pts.length-1].x-slip.bx,pts[pts.length-1].y-slip.by);
-      const exit=d0>dN?pts[0]:pts[pts.length-1];
-      this.x=slip.tx; this.y=slip.ty;
+      const exit=Math.hypot(pts[0].x-slip.bx,pts[0].y-slip.by)>Math.hypot(pts[pts.length-1].x-slip.bx,pts[pts.length-1].y-slip.by)?pts[0]:pts[pts.length-1];
+      this.x=slip.tx;this.y=slip.ty;
       this.mergeDelay=slip.hasMergeConflict?this.rules.conflictFactor*(1+Math.random()*2):0;
       this.speed=SPEED.motorwaySlip;
-      this.routeDir=road.id; this.roadId=road.id; this.isOnSlip=true;
+      this.routeDir=road.id;this.roadId=road.id;this.isOnSlip=true;
       const curve=slip.curve||[];
       this.path=[
         ...[...curve].reverse().map(p=>({x:p.x,y:p.y,action:'MOVING',speed:SPEED.motorwaySlip})),
@@ -542,90 +532,76 @@ class Renderer {
 
   _motorway(){
     const ctx=this.ctx,net=this.network;
-    const MOTORWAY_LANES=3; // always 3 lanes per carriageway on Spanish motorway
-    const cW=MOTORWAY_LANES*LANE_W; // total carriageway width
-    net.mainRoads.forEach(road=>{
-      const len=Math.hypot(road.x2-road.x1,road.y2-road.y1);
-      ctx.save();ctx.translate(road.x1,road.y1);ctx.rotate(road.angleRad);
-      // Verge
-      ctx.fillStyle='#c8d8b8';ctx.fillRect(-10,-cW/2-16,len+20,cW+32);
-      // Road surface
-      ctx.fillStyle='#7a8599';ctx.fillRect(0,-cW/2,len,cW);
-      // Edge lines
-      ctx.strokeStyle='rgba(255,255,255,0.95)';ctx.lineWidth=2;ctx.setLineDash([]);
-      ctx.beginPath();ctx.moveTo(0,-cW/2);ctx.lineTo(len,-cW/2);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(0,cW/2);ctx.lineTo(len,cW/2);ctx.stroke();
-      // Lane dashes
-      ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=1.2;ctx.setLineDash([20,14]);
-      for(let l=1;l<MOTORWAY_LANES;l++){
-        const ly=-cW/2+l*LANE_W;
-        ctx.beginPath();ctx.moveTo(0,ly);ctx.lineTo(len,ly);ctx.stroke();
-      }
-      ctx.setLineDash([]);
-      // Direction arrows (all pointing forward = x1→x2 = the direction user clicked)
-      ctx.fillStyle='rgba(255,255,255,0.3)';
-      for(let d=120;d<len-20;d+=120){
-        ctx.save();ctx.translate(d,0);
-        ctx.beginPath();ctx.moveTo(8,0);ctx.lineTo(-4,-4);ctx.lineTo(-4,4);ctx.closePath();ctx.fill();
-        ctx.restore();
-      }
-      ctx.restore();
-    });
-    // Helper: snap a point to the nearest point on a polyline
-    const snapToPolyline=(pt, polyline)=>{
-      let best=pt, bestD=Infinity;
-      for(let i=1;i<polyline.length;i++){
-        const a=polyline[i-1], b=polyline[i];
-        const dx=b.x-a.x, dy=b.y-a.y, len2=dx*dx+dy*dy;
-        const t=len2?Math.max(0,Math.min(1,((pt.x-a.x)*dx+(pt.y-a.y)*dy)/len2)):0;
-        const sx=a.x+t*dx, sy=a.y+t*dy;
-        const d=Math.hypot(pt.x-sx,pt.y-sy);
-        if(d<bestD){bestD=d;best={x:sx,y:sy};}
+    const cW=3*LANE_W; // 3 lanes per carriageway
+
+    const drawPoly=(pts,lw,style)=>{
+      if(!pts||pts.length<2)return;
+      ctx.strokeStyle=style;ctx.lineWidth=lw;ctx.lineJoin='round';ctx.lineCap='round';ctx.setLineDash([]);
+      ctx.beginPath();pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));ctx.stroke();
+    };
+
+    // Snap a point to nearest position on a polyline
+    const snap=(pt,poly)=>{
+      let best=pt,bestD=Infinity;
+      for(let i=1;i<poly.length;i++){
+        const a=poly[i-1],b=poly[i],dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;
+        const t=l2?Math.max(0,Math.min(1,((pt.x-a.x)*dx+(pt.y-a.y)*dy)/l2)):0;
+        const d=Math.hypot(pt.x-(a.x+t*dx),pt.y-(a.y+t*dy));
+        if(d<bestD){bestD=d;best={x:a.x+t*dx,y:a.y+t*dy};}
       }
       return best;
     };
 
-    // Slip roads
-    net.slipRoads.forEach(slip=>{
-      let pts=slip.renderPts ? [...slip.renderPts] : [{x:slip.bx,y:slip.by},{x:slip.tx,y:slip.ty}];
-      if(pts.length<2) return;
-
-      // Snap the motorway-join end to the nearest point on the correct carriageway polyline
-      const road=net.mainRoads.find(r=>r.id===slip.fromRoadId)||net.mainRoads.find(r=>r.id===slip.toRoadId)||net.mainRoads[0];
-      if(road?.polyline?.length>1){
-        const isOffRamp=slip.type==='off-ramp'||slip.type==='diverge';
-        // off-ramp: first point is the motorway branch; on-ramp: last point
-        if(isOffRamp){
-          pts[0]=snapToPolyline(pts[0], road.polyline);
-        } else {
-          pts[pts.length-1]=snapToPolyline(pts[pts.length-1], road.polyline);
+    // Verge first
+    net.mainRoads.forEach(road=>{
+      const pts=road.polyline||[{x:road.x1,y:road.y1},{x:road.x2,y:road.y2}];
+      drawPoly(pts,cW+26,'#c8d8b8');
+    });
+    // Road surface + markings
+    net.mainRoads.forEach(road=>{
+      const pts=road.polyline||[{x:road.x1,y:road.y1},{x:road.x2,y:road.y2}];
+      drawPoly(pts,cW,'#7a8599');
+      drawPoly(pts,2,'rgba(255,255,255,0.9)');
+      ctx.setLineDash([18,12]);
+      drawPoly(pts,1,'rgba(255,255,255,0.4)');
+      ctx.setLineDash([]);
+      // Direction arrows
+      ctx.fillStyle='rgba(255,255,255,0.3)';
+      let dist=0;
+      for(let i=1;i<pts.length;i++){
+        const dx=pts[i].x-pts[i-1].x,dy=pts[i].y-pts[i-1].y;
+        dist+=Math.hypot(dx,dy);
+        if(dist>120){
+          dist=0;
+          ctx.save();ctx.translate((pts[i].x+pts[i-1].x)/2,(pts[i].y+pts[i-1].y)/2);
+          ctx.rotate(Math.atan2(dy,dx));
+          ctx.beginPath();ctx.moveTo(8,0);ctx.lineTo(-4,-4);ctx.lineTo(-4,4);ctx.closePath();ctx.fill();
+          ctx.restore();
         }
       }
+    });
 
+    // Slip roads — snap motorway-join end to carriageway, no text labels
+    net.slipRoads.forEach(slip=>{
+      let pts=slip.renderPts?[...slip.renderPts]:[{x:slip.bx,y:slip.by},{x:slip.tx,y:slip.ty}];
+      if(pts.length<2)return;
+      const road=net.mainRoads.find(r=>r.id===slip.fromRoadId)||net.mainRoads.find(r=>r.id===slip.toRoadId)||net.mainRoads[0];
+      if(road?.polyline?.length>1){
+        const isOff=slip.type==='off-ramp'||slip.type==='diverge';
+        if(isOff) pts[0]=snap(pts[0],road.polyline);
+        else pts[pts.length-1]=snap(pts[pts.length-1],road.polyline);
+      }
       const slipW=LANE_W+4;
-      ctx.save();
-      // Verge
-      ctx.strokeStyle='#b8c8a8'; ctx.lineWidth=slipW+10; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.setLineDash([]);
-      ctx.beginPath(); pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)); ctx.stroke();
-      // Surface
-      ctx.strokeStyle='#9aa0ad'; ctx.lineWidth=slipW;
-      ctx.beginPath(); pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)); ctx.stroke();
-      // Edge
-      ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1;
-      ctx.beginPath(); pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)); ctx.stroke();
-      ctx.restore();
-
-      // Direction arrow only — no text label
-      const totalSegs=pts.length-1;
-      const targetSeg=Math.floor(totalSegs*0.5);
-      const p0=pts[Math.min(targetSeg,pts.length-2)];
-      const p1=pts[Math.min(targetSeg+1,pts.length-1)];
-      const adx=p1.x-p0.x, ady=p1.y-p0.y;
-      const isOnRamp=slip.type==='on-ramp'||slip.type==='merge';
-      const arrowAngle=isOnRamp?Math.atan2(-ady,-adx):Math.atan2(ady,adx);
-      const ax=(p0.x+p1.x)/2, ay=(p0.y+p1.y)/2;
-      ctx.save();ctx.translate(ax,ay);ctx.rotate(arrowAngle);
-      ctx.fillStyle=isOnRamp?'#16a34a':'#d97706';
+      drawPoly(pts,slipW+10,'#b8c8a8');
+      drawPoly(pts,slipW,'#9aa0ad');
+      drawPoly(pts,1,'rgba(255,255,255,0.5)');
+      // Direction arrow only (no label)
+      const mid=Math.floor((pts.length-1)*0.5);
+      const p0=pts[Math.min(mid,pts.length-2)],p1=pts[Math.min(mid+1,pts.length-1)];
+      const isOn=slip.type==='on-ramp'||slip.type==='merge';
+      const ang=isOn?Math.atan2(p0.y-p1.y,p0.x-p1.x):Math.atan2(p1.y-p0.y,p1.x-p0.x);
+      ctx.save();ctx.translate((p0.x+p1.x)/2,(p0.y+p1.y)/2);ctx.rotate(ang);
+      ctx.fillStyle=isOn?'#16a34a':'#d97706';
       ctx.beginPath();ctx.moveTo(9,0);ctx.lineTo(-5,-5);ctx.lineTo(-5,5);ctx.closePath();ctx.fill();
       ctx.restore();
     });
@@ -742,7 +718,6 @@ class Simulation {
 
 
 
-
 // ════════════════════════════════════════════════════════════════
 //  OSM FETCHER
 // ════════════════════════════════════════════════════════════════
@@ -772,31 +747,21 @@ class OSMFetcher {
     return await r.json();
   }
 
-  // Stitch OSM ways that connect end-to-end into continuous polylines
-  static _stitchWays(ways) {
-    const byStart={},byEnd={};
-    ways.forEach(w=>{byStart[w.nodes[0]]=w;byEnd[w.nodes[w.nodes.length-1]]=w;});
-    const visited=new Set();
-    const chains=[];
-    ways.forEach(w=>{
-      if(visited.has(w.id)) return;
-      let head=w,safety=0;
-      while(byEnd[head.nodes[0]]&&!visited.has(byEnd[head.nodes[0]].id)&&safety++<200){
-        const prev=byEnd[head.nodes[0]];
-        if(prev.id===head.id) break;
-        head=prev;
-      }
-      const nodeIds=[];
-      let cur=head;
-      const seen=new Set();
-      while(cur&&!seen.has(cur.id)){
-        seen.add(cur.id);visited.add(cur.id);
-        nodeIds.push(...(nodeIds.length?cur.nodes.slice(1):cur.nodes));
-        cur=byStart[cur.nodes[cur.nodes.length-1]];
-      }
-      if(nodeIds.length>=2) chains.push(nodeIds);
-    });
-    return chains;
+  // Stitch ways that share endpoints into one continuous polyline
+  static _stitchChain(ways) {
+    if(!ways.length) return [];
+    const byStart={}, byEnd={};
+    ways.forEach(w=>{ byStart[w.nodes[0]]=w; byEnd[w.nodes[w.nodes.length-1]]=w; });
+    // Find a head — a way whose start node is not the end of another way
+    let head = ways.find(w=>!byEnd[w.nodes[0]]) || ways[0];
+    const nodeIds=[], seen=new Set();
+    let cur=head;
+    while(cur && !seen.has(cur.id)){
+      seen.add(cur.id);
+      nodeIds.push(...(nodeIds.length ? cur.nodes.slice(1) : cur.nodes));
+      cur=byStart[cur.nodes[cur.nodes.length-1]];
+    }
+    return nodeIds;
   }
 
   static buildNetwork(osmData,lat,lon,W,H) {
@@ -818,27 +783,87 @@ class OSMFetcher {
   }
 
   static _buildMotorway(mwWays,lkWays,nodeMap,nodePt,W,H) {
-    // Stitch fragmented ways into continuous chains
-    const chains=OSMFetcher._stitchWays(mwWays);
+    // Group motorway ways by ref tag
+    const byRef={};
+    mwWays.forEach(w=>{
+      const ref=w.tags.ref||w.tags.name||'_';
+      if(!byRef[ref]) byRef[ref]=[];
+      byRef[ref].push(w);
+    });
+
+    // Pick the ref with the most ways — that's the main road at this junction
+    const refs=Object.entries(byRef).sort((a,b)=>b[1].length-a[1].length);
+    const dominantWays=refs[0][1];
+
+    // Within the dominant ref, separate by oneway direction
+    // oneway=yes → forward carriageway, oneway=-1 → reverse carriageway
+    // (all motorway ways have oneway=yes, so we split by shared-node clusters)
+    // Strategy: build a node-adjacency graph, find 2 independent chains
+    const fwd=dominantWays.filter(w=>w.tags.oneway!=='-1');
+    const rev=dominantWays.filter(w=>w.tags.oneway==='-1');
+
+    // If OSM has explicit oneway=-1 for one direction, use that split
+    // Otherwise, use all ways and let stitching produce 2 chains naturally
+    let carriageways;
+    if(rev.length>0){
+      carriageways=[
+        OSMFetcher._stitchChain(fwd),
+        OSMFetcher._stitchChain(rev),
+      ].filter(c=>c.length>=2);
+    } else {
+      // All oneway=yes — stitch into chains by connectivity
+      // Sort ways so connected ones are adjacent
+      const byStart={}, byEnd={};
+      fwd.forEach(w=>{ byStart[w.nodes[0]]=w; byEnd[w.nodes[w.nodes.length-1]]=w; });
+      const visited=new Set();
+      const chains=[];
+      fwd.forEach(w=>{
+        if(visited.has(w.id)) return;
+        // Walk back to chain head
+        let head=w, safety=0;
+        while(byEnd[head.nodes[0]] && !visited.has(byEnd[head.nodes[0]].id) && safety++<200){
+          const prev=byEnd[head.nodes[0]];
+          if(prev.id===head.id) break;
+          head=prev;
+        }
+        const nodeIds=[];
+        let cur=head;
+        const seen=new Set();
+        while(cur&&!seen.has(cur.id)){
+          seen.add(cur.id); visited.add(cur.id);
+          nodeIds.push(...(nodeIds.length?cur.nodes.slice(1):cur.nodes));
+          cur=byStart[cur.nodes[cur.nodes.length-1]];
+        }
+        if(nodeIds.length>=2) chains.push(nodeIds);
+      });
+      carriageways=chains;
+    }
+
+    // Convert to canvas polylines, take 2 longest
     const toPolyline=ids=>ids.map(nid=>nodePt(nid)).filter(p=>p&&!isNaN(p.x));
-    const polylines=chains.map(toPolyline).filter(p=>p.length>=2);
+    const polylines=carriageways.map(toPolyline).filter(p=>p.length>=2);
     polylines.sort((a,b)=>b.length-a.length);
+    const topTwo=polylines.slice(0,2); // always max 2 carriageways
 
-    const mainRoads=polylines.slice(0,4).map((pts,i)=>({
+    const mainRoads=topTwo.map((pts,i)=>({
       id:i, name:`Carriageway ${String.fromCharCode(65+i)}`,
-      x1:pts[0].x, y1:pts[0].y, x2:pts[pts.length-1].x, y2:pts[pts.length-1].y,
+      x1:pts[0].x,y1:pts[0].y,x2:pts[pts.length-1].x,y2:pts[pts.length-1].y,
       angleRad:Math.atan2(pts[pts.length-1].y-pts[0].y,pts[pts.length-1].x-pts[0].x),
-      lanes:3, lanesEachWay:3, speedLimit:120, roadType:'motorway', polyline:pts,
+      lanes:3,lanesEachWay:3,speedLimit:120,roadType:'motorway',polyline:pts,
     }));
-    if(!mainRoads.length) mainRoads.push({id:0,name:'Motorway',x1:0,y1:H/2,x2:W,y2:H/2,
-      angleRad:0,lanes:3,lanesEachWay:3,speedLimit:120,roadType:'motorway',polyline:[{x:0,y:H/2},{x:W,y:H/2}]});
 
-    const nearestOnRoad=(pt,road)=>{
+    if(!mainRoads.length){
+      mainRoads.push({id:0,name:'Motorway',x1:0,y1:H/2,x2:W,y2:H/2,
+        angleRad:0,lanes:3,lanesEachWay:3,speedLimit:120,roadType:'motorway',
+        polyline:[{x:0,y:H/2},{x:W,y:H/2}]});
+    }
+
+    // Snap point to nearest position on a polyline
+    const snapToPoly=(pt,poly)=>{
       let best=pt,bestD=Infinity;
-      const poly=road.polyline||[];
       for(let i=1;i<poly.length;i++){
-        const a=poly[i-1],b=poly[i],dx=b.x-a.x,dy=b.y-a.y,len2=dx*dx+dy*dy;
-        const t=len2?Math.max(0,Math.min(1,((pt.x-a.x)*dx+(pt.y-a.y)*dy)/len2)):0;
+        const a=poly[i-1],b=poly[i],dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;
+        const t=l2?Math.max(0,Math.min(1,((pt.x-a.x)*dx+(pt.y-a.y)*dy)/l2)):0;
         const d=Math.hypot(pt.x-(a.x+t*dx),pt.y-(a.y+t*dy));
         if(d<bestD){bestD=d;best={x:a.x+t*dx,y:a.y+t*dy};}
       }
@@ -849,27 +874,20 @@ class OSMFetcher {
       const pts=way.nodes.map(nid=>nodePt(nid)).filter(p=>p&&!isNaN(p.x));
       if(pts.length<2) return null;
       const s=pts[0],e=pts[pts.length-1];
-      const distToRoads=pt=>mainRoads.reduce((mn,r)=>
+      const nearRoad=pt=>mainRoads.reduce((mn,r)=>
         Math.min(mn,r.polyline.reduce((m,p)=>Math.min(m,Math.hypot(p.x-pt.x,p.y-pt.y)),Infinity)),Infinity);
-      const dS=distToRoads(s),dE=distToRoads(e);
-      const type=dS<dE?'off-ramp':'on-ramp';
-      // Find best road
+      const type=nearRoad(s)<nearRoad(e)?'off-ramp':'on-ramp';
       let bestRoad=mainRoads[0],bestD=Infinity;
       const jPt=type==='off-ramp'?s:e;
       mainRoads.forEach(r=>{
         const d=r.polyline.reduce((mn,p)=>Math.min(mn,Math.hypot(p.x-jPt.x,p.y-jPt.y)),Infinity);
         if(d<bestD){bestD=d;bestRoad=r;}
       });
-      // Snap branch point to road polyline
-      const rawBranch=type==='off-ramp'?s:e;
-      const snappedBranch=nearestOnRoad(rawBranch,bestRoad);
-      const bPt=snappedBranch, tPt=type==='off-ramp'?e:s;
-      // renderPts with snapped branch
-      const renderPts=type==='off-ramp'
-        ?[bPt,...pts.slice(1,-1),tPt]
-        :[tPt,...pts.slice(1,-1),bPt];
+      const snapped=snapToPoly(jPt,bestRoad.polyline);
+      const bPt=snapped, tPt=type==='off-ramp'?e:s;
+      const renderPts=type==='off-ramp'?[bPt,...pts.slice(1,-1),tPt]:[tPt,...pts.slice(1,-1),bPt];
       const curve=type==='off-ramp'?pts.slice(1,-1):pts.slice(1,-1).reverse();
-      return {id:i,type,fromRoadId:bestRoad.id,toRoadId:bestRoad.id,
+      return{id:i,type,fromRoadId:bestRoad.id,toRoadId:bestRoad.id,
         hasMergeConflict:type==='on-ramp',
         bx:bPt.x,by:bPt.y,tx:tPt.x,ty:tPt.y,
         slipLen:Math.hypot(tPt.x-bPt.x,tPt.y-bPt.y),
@@ -878,9 +896,9 @@ class OSMFetcher {
 
     const cx=W/2,cy=H/2;
     return{mode:'motorway',junctionType:'interchange',mainRoads,slipRoads,cx,cy,
-      speedLimit:120,features:['OpenStreetMap data',
-        `${mwWays.length} motorway ways → ${mainRoads.length} carriageways`,
-        `${lkWays.length} slip roads`],confidence:1.0};
+      speedLimit:120,
+      features:['OpenStreetMap data',`${mwWays.length} ways → ${mainRoads.length} carriageways`,`${lkWays.length} slip roads`],
+      confidence:1.0};
   }
 
   static _buildIntersection(ways,nodeMap,project,lat,lon,W,H) {
@@ -908,8 +926,7 @@ class OSMFetcher {
         lanesIn:Math.ceil(lanes/2),lanesOut:Math.floor(lanes/2),
         hasSignal:ways.length<=4,hasCrosswalk:!!way.tags.crossing,
         roadType:['motorway','trunk','primary'].includes(way.tags.highway)?'major':'minor',
-        ex:farPt.x,ey:farPt.y,ix:jPt.x,iy:jPt.y,
-        speedLimit:parseInt(way.tags.maxspeed)||50});
+        ex:farPt.x,ey:farPt.y,ix:jPt.x,iy:jPt.y,speedLimit:parseInt(way.tags.maxspeed)||50});
     });
     const type=roads.length===3?'T-junction':roads.length===4?'4-way':roads.length>=5?'complex':'T-junction';
     return{mode:'intersection',intersectionType:type,roads:roads.slice(0,6),
@@ -1101,16 +1118,16 @@ class AppController {
       if(e.target.closest('#osmSearch')||e.target.closest('#btnOsmSearch'))return;
       input.click();
     });
-    zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('drag-over');});
-    zone.addEventListener('dragleave',()=>zone.classList.remove('drag-over'));
-    zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('drag-over');if(e.dataTransfer.files[0]?.type.startsWith('image/'))this._handleFile(e.dataTransfer.files[0]);});
-    input.addEventListener('change',()=>{if(input.files[0])this._handleFile(input.files[0]);});
     const osmBtn=document.getElementById('btnOsmSearch'),osmInput=document.getElementById('osmSearch');
     if(osmBtn&&osmInput){
       const go=()=>{const q=osmInput.value.trim();if(q)this._fetchOSM(q);};
       osmBtn.addEventListener('click',(e)=>{e.stopPropagation();go();});
       osmInput.addEventListener('keydown',(e)=>{e.stopPropagation();if(e.key==='Enter')go();});
     }
+    zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('drag-over');});
+    zone.addEventListener('dragleave',()=>zone.classList.remove('drag-over'));
+    zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('drag-over');if(e.dataTransfer.files[0]?.type.startsWith('image/'))this._handleFile(e.dataTransfer.files[0]);});
+    input.addEventListener('change',()=>{if(input.files[0])this._handleFile(input.files[0]);});
     document.getElementById('btnReupload').addEventListener('click',()=>{
       ['previewSection','markTool','controlsSection','analysisSection'].forEach(id=>{document.getElementById(id).style.display='none';});
       document.getElementById('uploadZone').style.display='';
