@@ -1,23 +1,46 @@
 # ⬡ IntersectSim
 
-**Upload a Google Maps screenshot → watch traffic come alive.**
+**Search a junction, upload a screenshot, or mark roads manually — watch traffic come alive.**
 
-A browser-based intersection traffic simulator that uses Claude AI vision to analyse your map image and build a real physics simulation of vehicle flow, congestion, and signal timing.
+A browser-based traffic simulator supporting both urban intersections and motorway interchanges. Powered by OpenStreetMap data, Claude AI vision, and a real-time vehicle physics engine.
 
-👉 **[Live Demo](https://YOUR-USERNAME.github.io/intersect-sim)**
-
-![IntersectSim screenshot](screenshot.png)
+👉 **[Live Demo](https://jamesbarnard.github.io/intersect-sim)**
 
 ---
 
 ## What it does
 
-1. **Upload any Google Maps / satellite screenshot** of a road intersection
-2. **Claude AI analyses the image** — detecting roads, lane counts, traffic signals, intersection type
-3. **A real-time simulation spawns** with colour-coded vehicles navigating the detected road layout
-4. **Adjust parameters live**: traffic volume, time of day, signal timing, road rule system, simulation speed
-5. **Live metrics**: throughput, average wait time, congestion index, collision risk
-6. **Export CSV** of the metrics history
+1. **Search any location** using OpenStreetMap — no API key, no screenshot needed
+2. **Or upload a Google Maps / satellite screenshot** and let Claude AI analyse it
+3. **Or mark roads manually** by clicking directly on the map preview
+4. A real-time simulation spawns with colour-coded vehicles navigating the exact road layout
+5. Adjust traffic volume, time of day, road rules, and speed live
+6. View live metrics and export as CSV
+
+---
+
+## Three ways to load a junction
+
+### 1 — OpenStreetMap search (recommended)
+Type a location name (e.g. `Ma-20 Palma junction`) into the search box and press **Go**. The sim fetches real road geometry from OpenStreetMap — curved carriageways, correct lane counts, slip roads, speed limits — all automatically. Free, no API key needed.
+
+### 2 — Upload a screenshot
+Drop or click to upload a Google Maps or satellite image. With an Anthropic API key the sim uses Claude AI to auto-detect the road layout. Without a key you can mark roads manually (see below).
+
+### 3 — Manual road marking
+After uploading a screenshot, use the road marking tool to click road positions directly on the map:
+
+**Intersection mode**
+- Click the outer end of each road arm (A, B, C…)
+- Then click where it meets the junction (1, 2, 3…)
+- Click **Build Simulation**
+
+**Motorway mode**
+- Click **M1** then **M2** along the inner edge of carriageway A (in the direction of traffic flow)
+- Click **M3** then **M4** along the inner edge of carriageway B (opposite direction)
+- For each slip road: click the tip, then intermediate points along the road, then where it meets the motorway
+- Press **↓ Done — Exit** or **↑ Done — Entry** to set the ramp type
+- Click **Build Simulation**
 
 ---
 
@@ -25,18 +48,23 @@ A browser-based intersection traffic simulator that uses Claude AI vision to ana
 
 | Feature | Detail |
 |---|---|
-| 🤖 AI road detection | Claude vision identifies intersection type, lanes, signals |
-| 🚗 Physics simulation | Collision avoidance, signal-responsive yielding, lane discipline |
+| 🗺 OpenStreetMap import | Real road geometry, lane counts, speed limits — no API key needed |
+| 🤖 AI road detection | Claude vision identifies intersection type, lanes, signals from screenshots |
+| ⇉ Motorway mode | Dual carriageways, slip roads, on-ramps, off-ramps, per-lane speeds |
+| ⊕ Intersection mode | T-junctions, 4-way, complex junctions, roundabouts |
+| 📍 Manual marking | Click roads directly on your map for precise control |
+| 🚗 Physics simulation | Collision avoidance, signal-responsive yielding, bridge/tunnel logic |
 | 🕐 Time of day | Morning rush, evening rush, night — affects spawn rates |
 | 🚦 Signal modes | Adaptive, Fixed 30s, Fixed 60s, No signals |
 | 🌍 Rule systems | UK/EU, US Grid, Spanish (different hesitation & lane-change behaviour) |
-| 📊 Live metrics | Throughput, wait time, queue length, collision risk probability |
+| 🏎 Lane speed rules | Motorway: slow lane 80, middle 90, fast lane 100 km/h (Spanish standard) |
+| 📊 Live metrics | Throughput, wait time, queue length, collision risk |
 | 📈 Sparkline graph | Congestion, throughput, or wait time over time |
-| 📥 CSV export | Download metrics history |
+| 📥 CSV export | Download full metrics history |
 
 ---
 
-## Getting started (GitHub Pages hosting)
+## Getting started
 
 ### Option A — Fork & enable Pages (easiest)
 
@@ -48,9 +76,8 @@ A browser-based intersection traffic simulator that uses Claude AI vision to ana
 ### Option B — Clone & run locally
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/intersect-sim.git
+git clone https://github.com/jamesbarnard/intersect-sim.git
 cd intersect-sim
-# Any static file server works:
 npx serve .
 # or
 python3 -m http.server 8080
@@ -59,65 +86,38 @@ Open `http://localhost:8080`
 
 ---
 
-## API Key setup
+## API Key (optional)
 
-The AI image analysis uses the **Anthropic Claude API**. You need to add your API key.
+An Anthropic API key unlocks AI auto-detection from uploaded screenshots. Without it, OpenStreetMap search and manual road marking still work fully.
 
-### For local development
+Get a key at [console.anthropic.com](https://console.anthropic.com). Type it into the key field — it is never saved or sent anywhere other than the Anthropic API directly from your browser.
 
-In `sim.js`, find the fetch call and add your key to the headers:
-
-```js
-headers: {
-  'Content-Type': 'application/json',
-  'x-api-key': 'YOUR_KEY_HERE',          // ← add this
-  'anthropic-version': '2023-06-01',
-  'anthropic-dangerous-direct-browser-access': 'true'
-},
-```
-
-### Important security note
-
-**Never commit your API key to a public repo.**  
-For a public deployment, set up a small proxy server (Cloudflare Worker, Vercel Edge Function, etc.) that adds the key server-side, then point the fetch in `sim.js` at your proxy URL.
-
-### What happens without an API key?
-
-The app falls back to a standard 4-way intersection model automatically — so the simulation still runs, it just won't reflect your specific uploaded map.
+**Security note:** Never commit your API key to a public repo. For a shared deployment, route requests through a proxy (Cloudflare Worker, Vercel Edge Function) that injects the key server-side.
 
 ---
 
 ## How it works
 
 ```
-User uploads image
-        ↓
-ImageAnalyser.analyse()
-  → sends base64 image to Claude API
-  → Claude returns JSON: { intersectionType, roads[], features[] }
-        ↓
-RoadNetwork built from JSON
-  → road endpoints, lane counts, signal positions computed
-        ↓
-Simulation initialises
-  → TrafficSignal phases built from road structure
-  → Vehicles spawned per road arm at configurable rate
-        ↓
-Per-frame loop (30fps)
-  → signal.step() — advance phase timer
-  → vehicle.step() — state machine, collision avoidance
-  → Renderer draws roads + heatmap + vehicles
-  → MetricsTracker records rolling stats
-```
-
-### Vehicle state machine
-
-```
-APPROACHING → WAITING → CROSSING → EXITING → DONE
-                 ↑
-           checks signal green
-           + checks intersection clear
-           + applies rule-system hesitation
+OSM Search                    Screenshot Upload
+     ↓                               ↓
+OSMFetcher                    ImageAnalyser (Claude API)
+  → Nominatim geocode           → sends resized base64 image
+  → Overpass API roads          → returns JSON road geometry
+  → project to canvas pixels         ↓
+     ↓                        ← both paths →
+              RoadNetwork built
+         (motorway or intersection)
+                   ↓
+          Simulation initialises
+      → Vehicles spawned per road/lane
+      → TrafficSignal phases (intersection)
+                   ↓
+          Per-frame loop (30fps)
+      → signal.step() — advance phase
+      → vehicle.step() — state machine
+      → Renderer draws roads + heatmap + vehicles
+      → MetricsTracker records stats
 ```
 
 ### Rule system differences
@@ -135,8 +135,8 @@ APPROACHING → WAITING → CROSSING → EXITING → DONE
 ```
 intersect-sim/
 ├── index.html      — Layout and UI structure
-├── style.css       — All styling (dark terminal aesthetic)
-├── sim.js          — Simulation engine + AI analysis + app controller
+├── style.css       — Light theme styling
+├── sim.js          — Simulation engine, OSM fetcher, AI analyser, app controller
 └── README.md
 ```
 
@@ -146,7 +146,9 @@ intersect-sim/
 
 - **Vanilla JS** — no frameworks, no build step
 - **Canvas 2D API** — all rendering
-- **Claude claude-sonnet-4-20250514** — image analysis
+- **OpenStreetMap / Overpass API** — free road geometry data
+- **Nominatim** — free geocoding
+- **Claude claude-sonnet-4-20250514** — optional AI image analysis
 - **GitHub Pages** — hosting
 
 ---
