@@ -796,13 +796,13 @@ class AppController {
     this._roads = [];
     this._pendingOuter = null;
     this._pendingInner = null;
-    this._motorwayLine = null;   // legacy, kept for compat
-    this._motorwayA = null;      // carriageway A: {p1,p2} M1→M2
-    this._motorwayB = null;      // carriageway B: {p1,p2} M3→M4
+    this._motorwayLine = null;   // legacy
+    this._motorwayA = null;      // carriageway A: {p1,p2} M1→M2 (user clicks this)
+    this._motorwayB = null;      // carriageway B: auto-generated as reverse of A
     this._pendingM1 = null;
     this._pendingM3 = null;
     this._imgNaturalW=1; this._imgNaturalH=1;
-    this._markingMode = 'intersection'; // 'intersection' | 'motorway'
+    this._markingMode = 'intersection';
     this._bindUI();
   }
 
@@ -819,13 +819,9 @@ class AppController {
 
     if(this._markingMode==='motorway'){
       if(!this._motorwayA){
-        instr.innerHTML='<strong>Step 1:</strong> Click <strong>M1</strong> then <strong>M2</strong> — the two ends of the <strong>first carriageway</strong> (click in the direction traffic flows).';
-        badge.textContent='M1'; badge.style.background='#1d4ed8';
-        label.textContent=this._pendingM1?'Now click M2 (other end, same carriageway)':'Click M1 — one end of carriageway 1';
-      }else if(!this._motorwayB){
-        instr.innerHTML='<strong>Step 2:</strong> Click <strong>M3</strong> then <strong>M4</strong> — the two ends of the <strong>second carriageway</strong> (opposite direction).';
-        badge.textContent='M3'; badge.style.background='#0f766e';
-        label.textContent=this._pendingM3?'Now click M4 (other end, carriageway 2)':'Click M3 — one end of carriageway 2';
+        instr.innerHTML='<strong>Step 1:</strong> Click <strong>M1</strong> then <strong>M2</strong> — the two ends of the motorway, clicking in the direction traffic flows on <em>one</em> carriageway. The other carriageway is created automatically.';
+        badge.textContent='M'; badge.style.background='#1d4ed8';
+        label.textContent=this._pendingM1?'Now click M2 — the other end':'Click M1 — one end of the motorway';
       }else{
         // Step 2: mark slip roads
         instr.innerHTML='<strong>Step 2:</strong> For each slip road: click its <strong>tip</strong> (A, B…) then where it <strong>meets the motorway</strong> (1, 2…). Then choose exit or on-ramp.';
@@ -868,19 +864,28 @@ class AppController {
       const makeRoad=(line, id, sx, sy)=>{
         const x1=line.p1.x*sx, y1=line.p1.y*sy;
         const x2=line.p2.x*sx, y2=line.p2.y*sy;
-        const angleRad=Math.atan2(y2-y1, x2-x1); // raw screen angle, x1→x2 direction
+        const angleRad=Math.atan2(y2-y1, x2-x1);
         return { id, name: id===0?'Carriageway A':'Carriageway B',
           x1, y1, x2, y2, angleRad, speedLimit:120, roadType:'motorway' };
       };
 
-      const mainRoads=[
-        makeRoad(this._motorwayA, 0, sx, sy),
-        makeRoad(this._motorwayB, 1, sx, sy),
-      ];
-      // cx/cy = midpoint between the two carriageways' midpoints
+      // Both roads share the same centreline; B is just A reversed.
+      // The renderer offsets them to opposite sides (id=0 → +perp, id=1 → -perp).
+      const roadA=makeRoad(this._motorwayA, 0, sx, sy);
+      const roadB=makeRoad(this._motorwayB, 1, sx, sy);
+      const mainRoads=[roadA, roadB];
       const mid=(r)=>({ x:(r.x1+r.x2)/2, y:(r.y1+r.y2)/2 });
-      const mA=mid(mainRoads[0]), mB=mid(mainRoads[1]);
-      const cx2=(mA.x+mB.x)/2, cy2=(mA.y+mB.y)/2;
+      const mA=mid(roadA);
+      const cx2=mA.x, cy2=mA.y; // centreline midpoint
+
+      // Assign each slip to carriageway A or B based on which side of the centreline
+      // the branch point falls on (using the perp of road A).
+      const perpA=roadA.angleRad+Math.PI/2;
+      const perpCx=Math.cos(perpA), perpCy=Math.sin(perpA);
+      const sideOfCentre=(px,py)=>{
+        // dot product of (branch - centreStart) with perp unit vector
+        return (px-roadA.x1)*perpCx + (py-roadA.y1)*perpCy;
+      };
 
       // Each marked pair becomes a slip road
       const slipRoads=roads.map((road,i)=>{
@@ -914,14 +919,10 @@ class AppController {
           : [...rawMid].reverse();        // bx=inner, so reverse
 
         const slipLen=Math.hypot(tx-bx, ty-by);
-        // Assign to whichever carriageway's line the branch point is closest to
-        const distToRoad=(r,px,py)=>{
-          const dx=r.x2-r.x1, dy=r.y2-r.y1, len2=dx*dx+dy*dy;
-          if(len2===0) return Math.hypot(px-r.x1,py-r.y1);
-          const t=Math.max(0,Math.min(1,((px-r.x1)*dx+(py-r.y1)*dy)/len2));
-          return Math.hypot(px-(r.x1+t*dx), py-(r.y1+t*dy));
-        };
-        const roadId = distToRoad(mainRoads[0],bx,by) <= distToRoad(mainRoads[1],bx,by) ? 0 : 1;
+        // Assign to carriageway A (id=0, +perp side) or B (id=1, -perp side)
+        // based on which side of the centreline the branch point is on.
+        const side=sideOfCentre(bx,by);
+        const roadId = side >= 0 ? 0 : 1;
         return {
           id:i, type,
           fromRoadId:roadId, toRoadId:roadId,
@@ -1067,18 +1068,16 @@ class AppController {
       dx:x, dy:y,
     };
 
-    // ── Motorway carriageway clicks (M1→M2, then M3→M4) ──────
+    // ── Motorway carriageway clicks (M1→M2 only, B auto-generated) ──────
     if(this._markingMode==='motorway'){
-      // Phase: collecting carriageway A (M1→M2)
       if(!this._motorwayA){
         if(!this._pendingM1){ this._pendingM1=pt; }
-        else{ this._motorwayA={p1:this._pendingM1, p2:pt}; this._pendingM1=null; }
-        this._redrawOverlay(); this._updateMarkBadge(); return;
-      }
-      // Phase: collecting carriageway B (M3→M4)
-      if(!this._motorwayB){
-        if(!this._pendingM3){ this._pendingM3=pt; }
-        else{ this._motorwayB={p1:this._pendingM3, p2:pt}; this._pendingM3=null; }
+        else{
+          this._motorwayA={p1:this._pendingM1, p2:pt};
+          // Auto-generate carriageway B as the reverse direction (same line, opposite ends)
+          this._motorwayB={p1:pt, p2:this._pendingM1};
+          this._pendingM1=null;
+        }
         this._redrawOverlay(); this._updateMarkBadge(); return;
       }
       // Both carriageways set — now collecting slip roads (fall through below)
@@ -1201,19 +1200,12 @@ class AppController {
       });
     };
     drawCarriageway(this._motorwayA,['M1','M2'],'#1d4ed8');
-    drawCarriageway(this._motorwayB,['M3','M4'],'#0f766e');
-    // Pending first click of each carriageway
+    // Pending first click
     if(!this._motorwayA && this._pendingM1){
       const ox=this._pendingM1.dx*sx, oy=this._pendingM1.dy*sy;
       ctx.beginPath();ctx.arc(ox,oy,8,0,Math.PI*2);ctx.fillStyle='#1d4ed8aa';ctx.fill();
       ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
       ctx.fillStyle='#fff';ctx.font='bold 8px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('M1',ox,oy);
-    }
-    if(this._motorwayA && !this._motorwayB && this._pendingM3){
-      const ox=this._pendingM3.dx*sx, oy=this._pendingM3.dy*sy;
-      ctx.beginPath();ctx.arc(ox,oy,8,0,Math.PI*2);ctx.fillStyle='#0f766eaa';ctx.fill();
-      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
-      ctx.fillStyle='#fff';ctx.font='bold 8px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('M3',ox,oy);
     }
 
     // Draw completed slip road pairs
