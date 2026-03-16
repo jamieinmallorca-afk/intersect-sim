@@ -18,7 +18,7 @@
     <span class="logo-icon">⬡</span>
     <span class="logo-text">INTERSECT<span class="logo-accent">SIM</span></span>
   </div>
-  <p class="tagline">Upload a map screenshot. Watch traffic come alive.</p>
+  <p class="tagline">Search a junction or upload a screenshot. Watch traffic come alive.</p>
 </header>
 
 <!-- ═══════════════════════════════════════════════════════════
@@ -47,9 +47,18 @@
     <section class="upload-zone" id="uploadZone">
       <div class="upload-inner" id="uploadInner">
         <div class="upload-icon">⊕</div>
-        <p class="upload-primary">Drop Google Maps screenshot here</p>
+        <p class="upload-primary">Drop a map screenshot here</p>
         <p class="upload-secondary">or click to browse</p>
         <input type="file" id="fileInput" accept="image/*" hidden/>
+        <div style="margin-top:10px;width:100%;border-top:1px solid var(--border);padding-top:10px">
+          <p style="font-size:11px;color:var(--text-dim);margin:0 0 6px 0;text-align:left">— or search OpenStreetMap —</p>
+          <div style="display:flex;gap:6px">
+            <input type="text" id="osmSearch" placeholder="e.g. Ma-20 Palma junction"
+              style="flex:1;font-size:11px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)"/>
+            <button id="btnOsmSearch" style="padding:6px 10px;font-size:11px;background:var(--accent2);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Go</button>
+          </div>
+          <p style="font-size:10px;color:var(--text-dim);margin:4px 0 0 0;text-align:left">Free, no API key needed. Uses OpenStreetMap data.</p>
+        </div>
       </div>
     </section>
 
