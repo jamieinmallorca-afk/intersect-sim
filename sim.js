@@ -729,17 +729,23 @@ class OSMFetcher {
 
   // BFS: group ways that share nodes into connected components
   static _groupWays(ways) {
+    const wayIds=new Set(ways.map(w=>w.id));
     const wayMap={};
     ways.forEach(w=>{wayMap[w.id]=w;});
+    // Build node→wayId map (only for ways in our set)
     const nodeWays={};
     ways.forEach(w=>w.nodes.forEach(n=>{(nodeWays[n]=nodeWays[n]||[]).push(w.id);}));
+    // Build adjacency (only between ways in our set)
     const adj={};
     ways.forEach(w=>{adj[w.id]=new Set();});
     Object.values(nodeWays).forEach(ids=>{
       for(let i=0;i<ids.length;i++) for(let j=i+1;j<ids.length;j++){
-        adj[ids[i]].add(ids[j]); adj[ids[j]].add(ids[i]);
+        if(adj[ids[i]]&&adj[ids[j]]){
+          adj[ids[i]].add(ids[j]); adj[ids[j]].add(ids[i]);
+        }
       }
     });
+    // BFS to find connected components
     const visited=new Set(), groups=[];
     ways.forEach(w=>{
       if(visited.has(w.id)) return;
@@ -748,9 +754,9 @@ class OSMFetcher {
         const id=queue.pop();
         if(visited.has(id)||!wayMap[id]) continue;
         visited.add(id); grp.push(wayMap[id]);
-        adj[id].forEach(nb=>{if(!visited.has(nb))queue.push(nb);});
+        if(adj[id]) adj[id].forEach(nb=>{if(!visited.has(nb)&&wayMap[nb])queue.push(nb);});
       }
-      groups.push(grp);
+      if(grp.length>0) groups.push(grp);
     });
     return groups;
   }
