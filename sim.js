@@ -854,6 +854,8 @@ class OSMFetcher {
         renderPts};
     }).filter(Boolean);
 
+    console.log(`OSM: ${mwWays.length} motorway ways, ${lkWays.length} link ways → ${nearbyLk.length} nearby → ${groups.length} groups → ${slipRoads.length} slip roads`);
+
     return{mode:'motorway',junctionType:'interchange',mainRoads,slipRoads,cx:W/2,cy:H/2,
       speedLimit:120,features:['OpenStreetMap data',`${dominant.length} motorway ways`,`${slipRoads.length} slip roads`],confidence:1.0};
   }
