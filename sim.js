@@ -703,11 +703,27 @@ class Simulation {
 // ════════════════════════════════════════════════════════════════
 
 class OSMFetcher {
+  static _parseDMS(str) {
+    // Match DMS like: 39°35'06.9"N 2°40'08.0"E or 39 35 06.9 N, 2 40 08.0 E
+    const dms=/(\d+)[°\s]+(\d+)['\s]+(\d+\.?\d*)["\s]*([NS])[,\s]+(\d+)[°\s]+(\d+)['\s]+(\d+\.?\d*)["\s]*([EW])/i;
+    const m=str.match(dms);
+    if(!m) return null;
+    const lat=(+m[1]+(+m[2])/60+(+m[3])/3600)*(m[4].toUpperCase()==='S'?-1:1);
+    const lon=(+m[5]+(+m[6])/60+(+m[7])/3600)*(m[8].toUpperCase()==='W'?-1:1);
+    return {lat,lon};
+  }
+
   static async geocode(query) {
-    const m=query.trim().match(/^(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)$/);
-    if(m) return {lat:parseFloat(m[1]),lon:parseFloat(m[2]),name:query};
-    const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
-      {headers:{'Accept-Language':'en','User-Agent':'IntersectSim/1.0'}});
+    // Decimal lat,lon  e.g. "39.5853, 2.6689"
+    const mDec=query.trim().match(/^(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)$/);
+    if(mDec) return {lat:parseFloat(mDec[1]),lon:parseFloat(mDec[2]),name:query};
+    // DMS coordinates e.g. "39°35'06.9"N 2°40'08.0"E"
+    const dms=OSMFetcher._parseDMS(query);
+    if(dms) return {lat:dms.lat,lon:dms.lon,name:`${dms.lat.toFixed(5)},${dms.lon.toFixed(5)}`};
+    // Place name — use Nominatim
+    const url=`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&accept-language=en`;
+    const r=await fetch(url,{headers:{'User-Agent':'IntersectSim/1.0 (https://jamesbarnard.github.io/intersect-sim)'}});
+    if(!r.ok) throw new Error(`Nominatim error: ${r.status}`);
     const d=await r.json();
     if(!d.length) throw new Error(`Location not found: "${query}"`);
     return {lat:parseFloat(d[0].lat),lon:parseFloat(d[0].lon),name:d[0].display_name};
@@ -715,48 +731,33 @@ class OSMFetcher {
 
   static async fetchRoads(lat,lon,radius=500) {
     const servers=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
-
-    // Use bounding box — far more reliable than around: on Overpass
-    // bbox format: south,west,north,east
     const dlat=radius/111320;
     const dlon=radius/(111320*Math.cos(lat*Math.PI/180));
     const bbox=`${lat-dlat},${lon-dlon},${lat+dlat},${lon+dlon}`;
-
-    // Step 1: fetch way bodies only (no node coords) — small payload, always complete
-    const qMotorway=`[out:json][timeout:30];(way["highway"="motorway"](${bbox});way["highway"="motorway_link"](${bbox});way["highway"="trunk"](${bbox});way["highway"="trunk_link"](${bbox}););out body;`;
+    const qMW=`[out:json][timeout:30];(way["highway"="motorway"](${bbox});way["highway"="motorway_link"](${bbox});way["highway"="trunk"](${bbox});way["highway"="trunk_link"](${bbox}););out body;`;
     const qUrban=`[out:json][timeout:30];(way["highway"="primary"](${bbox});way["highway"="secondary"](${bbox}););out body;`;
-
     let lastErr;
     for(const server of servers){
       try{
-        // Fetch motorway ways
-        const r1=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qMotorway),signal:AbortSignal.timeout(25000)});
+        const r1=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qMW),signal:AbortSignal.timeout(25000)});
         if(!r1.ok) throw new Error(`HTTP ${r1.status}`);
         const d1=await r1.json();
         let ways=(d1.elements||[]).filter(e=>e.type==='way');
         const mwCount=ways.filter(w=>w.tags&&(w.tags.highway==='motorway'||w.tags.highway==='trunk')).length;
-        console.log(`Step1: ${ways.length} ways, ${mwCount} motorway, bbox=${bbox}`);
-
+        console.log(`Step1: ${ways.length} ways, ${mwCount} motorway`);
         if(mwCount===0){
-          // No motorway — try urban roads
           const ru=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qUrban),signal:AbortSignal.timeout(25000)});
           if(!ru.ok) throw new Error(`HTTP ${ru.status}`);
-          const du=await ru.json();
-          ways=(du.elements||[]).filter(e=>e.type==='way');
+          ways=((await ru.json()).elements||[]).filter(e=>e.type==='way');
         }
-
-        // Step 2: fetch coords for only the nodes our ways reference
         const nodeIds=[...new Set(ways.flatMap(w=>w.nodes||[]))];
         console.log(`Step2: fetching ${nodeIds.length} nodes`);
         const qNodes=`[out:json][timeout:30];node(id:${nodeIds.join(',')});out skel;`;
         const r2=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qNodes),signal:AbortSignal.timeout(25000)});
         if(!r2.ok) throw new Error(`HTTP ${r2.status}`);
         const d2=await r2.json();
-        const nodeCount=(d2.elements||[]).length;
-        console.log(`Step2: ${nodeCount} nodes — total ${ways.length} ways + ${nodeCount} nodes`);
-
+        console.log(`Step2: ${(d2.elements||[]).length} nodes`);
         return{elements:[...ways,...(d2.elements||[])]};
-
       }catch(e){lastErr=e;console.warn(`Overpass ${server} failed:`,e.message);}
     }
     throw new Error('Overpass API unavailable — try again. ('+lastErr?.message+')');
