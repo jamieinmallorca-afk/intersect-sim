@@ -716,26 +716,41 @@ class OSMFetcher {
   static async fetchRoads(lat,lon,radius=500) {
     const servers=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
 
-    // Query 1: motorway/trunk only — small, fast, gets all slip roads correctly
-    const qMotorway=`[out:json][timeout:25];(way["highway"="motorway"](around:${radius},${lat},${lon});way["highway"="motorway_link"](around:${radius},${lat},${lon});way["highway"="trunk"](around:${radius},${lat},${lon});way["highway"="trunk_link"](around:${radius},${lat},${lon}););out body;>;out skel qt;`;
-
-    // Query 2: urban roads — only used if no motorway found
-    const qUrban=`[out:json][timeout:25];(way["highway"="primary"](around:${radius},${lat},${lon});way["highway"="secondary"](around:${radius},${lat},${lon}););out body;>;out skel qt;`;
+    // Two-step: fetch ways first (small payload), then fetch only the nodes those ways need.
+    // This avoids Overpass truncating large combined responses.
+    const qMotorwayWays=`[out:json][timeout:25];(way["highway"="motorway"](around:${radius},${lat},${lon});way["highway"="motorway_link"](around:${radius},${lat},${lon});way["highway"="trunk"](around:${radius},${lat},${lon});way["highway"="trunk_link"](around:${radius},${lat},${lon}););out body;`;
+    const qUrbanWays=`[out:json][timeout:25];(way["highway"="primary"](around:${radius},${lat},${lon});way["highway"="secondary"](around:${radius},${lat},${lon}););out body;`;
 
     let lastErr;
     for(const server of servers){
       try{
-        // Try motorway query first
-        const r=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qMotorway),signal:AbortSignal.timeout(22000)});
-        if(!r.ok) throw new Error(`HTTP ${r.status}`);
-        const d=await r.json();
-        const mwCount=(d.elements||[]).filter(e=>e.type==='way'&&e.tags&&(e.tags.highway==='motorway'||e.tags.highway==='trunk')).length;
-        console.log(`Overpass motorway query: ${(d.elements||[]).length} elements, ${mwCount} motorway ways`);
-        if(mwCount>0) return d; // Found motorway — use this data, don't bother with urban roads
-        // No motorway — fetch urban roads instead
-        const r2=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qUrban),signal:AbortSignal.timeout(22000)});
+        // Step 1: fetch way metadata (tags + node ID lists, no coords yet)
+        const r1=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qMotorwayWays),signal:AbortSignal.timeout(22000)});
+        if(!r1.ok) throw new Error(`HTTP ${r1.status}`);
+        const d1=await r1.json();
+        let ways=(d1.elements||[]).filter(e=>e.type==='way');
+        const mwCount=ways.filter(w=>w.tags&&(w.tags.highway==='motorway'||w.tags.highway==='trunk')).length;
+        console.log(`Step1: ${ways.length} ways, ${mwCount} motorway`);
+
+        // If no motorway, fetch urban ways instead
+        if(mwCount===0){
+          const ru=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qUrbanWays),signal:AbortSignal.timeout(22000)});
+          if(!ru.ok) throw new Error(`HTTP ${ru.status}`);
+          const du=await ru.json();
+          ways=(du.elements||[]).filter(e=>e.type==='way');
+        }
+
+        // Step 2: fetch only the specific nodes referenced by our ways
+        const nodeIds=[...new Set(ways.flatMap(w=>w.nodes||[]))];
+        console.log(`Step2: fetching ${nodeIds.length} nodes`);
+        const qNodes=`[out:json][timeout:25];node(id:${nodeIds.join(',')});out skel;`;
+        const r2=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qNodes),signal:AbortSignal.timeout(22000)});
         if(!r2.ok) throw new Error(`HTTP ${r2.status}`);
-        return await r2.json();
+        const d2=await r2.json();
+        console.log(`Step2: ${(d2.elements||[]).length} nodes received`);
+
+        return{elements:[...ways,...(d2.elements||[])]};
+
       }catch(e){lastErr=e;console.warn(`Overpass ${server} failed:`,e.message);}
     }
     throw new Error('Overpass API unavailable — try again. ('+lastErr?.message+')');
