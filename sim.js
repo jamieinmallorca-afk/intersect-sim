@@ -714,14 +714,28 @@ class OSMFetcher {
   }
 
   static async fetchRoads(lat,lon,radius=500) {
-    const q=`[out:json][timeout:20];way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|secondary)$"](around:${radius},${lat},${lon});out body;>;out skel qt;`;
     const servers=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+
+    // Query 1: motorway/trunk only — small, fast, gets all slip roads correctly
+    const qMotorway=`[out:json][timeout:25];(way["highway"="motorway"](around:${radius},${lat},${lon});way["highway"="motorway_link"](around:${radius},${lat},${lon});way["highway"="trunk"](around:${radius},${lat},${lon});way["highway"="trunk_link"](around:${radius},${lat},${lon}););out body;>;out skel qt;`;
+
+    // Query 2: urban roads — only used if no motorway found
+    const qUrban=`[out:json][timeout:25];(way["highway"="primary"](around:${radius},${lat},${lon});way["highway"="secondary"](around:${radius},${lat},${lon}););out body;>;out skel qt;`;
+
     let lastErr;
     for(const server of servers){
       try{
-        const r=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(q),signal:AbortSignal.timeout(18000)});
+        // Try motorway query first
+        const r=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qMotorway),signal:AbortSignal.timeout(22000)});
         if(!r.ok) throw new Error(`HTTP ${r.status}`);
-        return await r.json();
+        const d=await r.json();
+        const mwCount=(d.elements||[]).filter(e=>e.type==='way'&&e.tags&&(e.tags.highway==='motorway'||e.tags.highway==='trunk')).length;
+        console.log(`Overpass motorway query: ${(d.elements||[]).length} elements, ${mwCount} motorway ways`);
+        if(mwCount>0) return d; // Found motorway — use this data, don't bother with urban roads
+        // No motorway — fetch urban roads instead
+        const r2=await fetch(server,{method:'POST',body:'data='+encodeURIComponent(qUrban),signal:AbortSignal.timeout(22000)});
+        if(!r2.ok) throw new Error(`HTTP ${r2.status}`);
+        return await r2.json();
       }catch(e){lastErr=e;console.warn(`Overpass ${server} failed:`,e.message);}
     }
     throw new Error('Overpass API unavailable — try again. ('+lastErr?.message+')');
