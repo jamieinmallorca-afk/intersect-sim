@@ -525,7 +525,7 @@ class Renderer {
 
   _motorway(){
     const ctx=this.ctx,net=this.network;
-    const MW=20,SL=9;
+    const MW=22,SL=11;
     const poly=(pts,lw,col,dash=[])=>{
       if(!pts||pts.length<2)return;
       ctx.strokeStyle=col;ctx.lineWidth=lw;ctx.lineJoin='round';ctx.lineCap='round';
@@ -533,32 +533,37 @@ class Renderer {
       pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
       ctx.stroke();ctx.setLineDash([]);
     };
-    // Slip road verges first (behind everything)
-    net.slipRoads.forEach(s=>poly(s.renderPts,SL+10,'#c8d8b8'));
-    // Motorway verge
-    net.mainRoads.forEach(r=>{poly(r.chain0,MW+16,'#c8d8b8');poly(r.chain1,MW+16,'#c8d8b8');});
-    // Motorway carriageways
-    net.mainRoads.forEach(r=>{
-      poly(r.chain0,MW,'#5a6070'); poly(r.chain1,MW,'#5a6070');
-      poly(r.chain0,1.5,'rgba(255,255,255,0.85)'); poly(r.chain1,1.5,'rgba(255,255,255,0.85)');
-      poly(r.chain0,1,'rgba(255,255,255,0.3)',[9,7]); poly(r.chain1,1,'rgba(255,255,255,0.3)',[9,7]);
-      poly(r.chain0,4,'#7a9e6a'); poly(r.chain1,4,'#7a9e6a');
-      [r.chain0,r.chain1].forEach(pts=>{
-        if(!pts||pts.length<2)return;
-        ctx.fillStyle='rgba(255,255,255,0.3)';let d=0;
-        for(let i=1;i<pts.length;i++){const dx=pts[i].x-pts[i-1].x,dy=pts[i].y-pts[i-1].y;d+=Math.hypot(dx,dy);
-          if(d>90){d=0;ctx.save();ctx.translate((pts[i].x+pts[i-1].x)/2,(pts[i].y+pts[i-1].y)/2);ctx.rotate(Math.atan2(dy,dx));ctx.beginPath();ctx.moveTo(6,0);ctx.lineTo(-3,-3);ctx.lineTo(-3,3);ctx.closePath();ctx.fill();ctx.restore();}}
-      });
+    const c0=net.mainRoads[0]?.chain0, c1=net.mainRoads[0]?.chain1;
+    // Layer 1: all verges (motorway + slip roads)
+    poly(c0,MW+18,'#b5c9a5'); poly(c1,MW+18,'#b5c9a5');
+    net.slipRoads.forEach(s=>poly(s.renderPts,SL+12,'#b5c9a5'));
+    // Layer 2: all road surfaces (motorway first so slip overlaps at join)
+    poly(c0,MW,'#525c6e'); poly(c1,MW,'#525c6e');
+    // Layer 3: slip road surfaces drawn ON TOP — they connect visually at join
+    net.slipRoads.forEach(s=>poly(s.renderPts,SL,'#6e7a8a'));
+    // Layer 4: motorway markings on top of slip roads
+    [c0,c1].forEach(c=>{
+      if(!c||c.length<2)return;
+      poly(c,1.5,'rgba(255,255,255,0.9)');
+      poly(c,1,'rgba(255,255,255,0.4)',[10,8]);
+      poly(c,5,'#6e9458');  // central reservation
     });
-    // Slip roads on top
+    net.slipRoads.forEach(s=>poly(s.renderPts,0.8,'rgba(255,255,255,0.6)'));
+    // Layer 5: direction arrows
+    [c0,c1].forEach(c=>{
+      if(!c||c.length<2)return;
+      ctx.fillStyle='rgba(255,255,255,0.4)';let d=0;
+      for(let i=1;i<c.length;i++){const dx=c[i].x-c[i-1].x,dy=c[i].y-c[i-1].y;d+=Math.hypot(dx,dy);
+        if(d>90){d=0;ctx.save();ctx.translate((c[i].x+c[i-1].x)/2,(c[i].y+c[i-1].y)/2);ctx.rotate(Math.atan2(dy,dx));
+          ctx.beginPath();ctx.moveTo(7,0);ctx.lineTo(-4,-3);ctx.lineTo(-4,3);ctx.closePath();ctx.fill();ctx.restore();}}
+    });
     net.slipRoads.forEach(s=>{
-      const pts=s.renderPts; if(!pts||pts.length<2)return;
-      poly(pts,SL,'#7a8190'); poly(pts,1,'rgba(255,255,255,0.7)');
-      const mi=Math.floor(pts.length*0.55);
+      const pts=s.renderPts;if(!pts||pts.length<2)return;
+      const mi=Math.floor(pts.length*0.5);
       const p0=pts[Math.max(0,mi-1)],p1=pts[Math.min(mi,pts.length-1)];
       ctx.save();ctx.translate((p0.x+p1.x)/2,(p0.y+p1.y)/2);ctx.rotate(Math.atan2(p1.y-p0.y,p1.x-p0.x));
-      ctx.fillStyle=s.type==='on-ramp'?'#16a34a':'#d97706';
-      ctx.beginPath();ctx.moveTo(8,0);ctx.lineTo(-5,-5);ctx.lineTo(-5,5);ctx.closePath();ctx.fill();
+      ctx.fillStyle=s.type==='on-ramp'?'#15803d':'#b45309';
+      ctx.beginPath();ctx.moveTo(9,0);ctx.lineTo(-5,-5);ctx.lineTo(-5,5);ctx.closePath();ctx.fill();
       ctx.restore();
     });
   }
@@ -704,7 +709,7 @@ class OSMFetcher {
       const r2=await fetch(s,{method:'POST',body:'data='+encodeURIComponent(`[out:json][timeout:30];node(id:${ni.join(',')});out skel;`),signal:AbortSignal.timeout(25000)});if(!r2.ok)throw new Error(`HTTP ${r2.status}`);
       return{elements:[...ws,...((await r2.json()).elements||[])]};
     }catch(e){le=e;console.warn(`Overpass ${s}:`,e.message);}}
-    throw new Error('Overpass unavailable. ('+le?.message+')');
+    throw new Error('Overpass unavailable.('+le?.message+')');
   }
 
   // BFS: group ways that share nodes into connected components
@@ -763,69 +768,68 @@ class OSMFetcher {
     const ways=elements.filter(e=>e.type==='way'&&e.nodes&&e.tags);
     const mwWays=ways.filter(w=>w.tags.highway==='motorway'||w.tags.highway==='trunk');
     const lkWays=ways.filter(w=>w.tags.highway==='motorway_link'||w.tags.highway==='trunk_link');
-    const initScale=Math.min(W,H)/2/500;
-    const cosLat=Math.cos(lat*Math.PI/180);
-    // Fit viewport to motorway ways only
+    const iS=Math.min(W,H)/2/500, cosL=Math.cos(lat*Math.PI/180);
+    const ip=(nLat,nLon)=>({x:W/2+(nLon-lon)*111320*cosL*iS,y:H/2-(nLat-lat)*111320*iS});
     const fitPts=[];
-    mwWays.forEach(w=>w.nodes.forEach(nid=>{const n=nodeMap[nid];if(n)fitPts.push({x:W/2+(n.lon-lon)*111320*cosLat*initScale,y:H/2-(n.lat-lat)*111320*initScale});}));
-    let scale=initScale,cx=W/2,cy=H/2;
+    mwWays.forEach(w=>w.nodes.forEach(nid=>{const n=nodeMap[nid];if(n)fitPts.push(ip(n.lat,n.lon));}));
+    let scale=iS,cx=W/2,cy=H/2;
     if(fitPts.length>1){
-      const pad=60;
-      const minX=Math.min(...fitPts.map(p=>p.x)),maxX=Math.max(...fitPts.map(p=>p.x));
-      const minY=Math.min(...fitPts.map(p=>p.y)),maxY=Math.max(...fitPts.map(p=>p.y));
-      const fitScale=Math.min((W-2*pad)/(maxX-minX),(H-2*pad)/(maxY-minY));
-      scale=initScale*fitScale;
-      cx=W/2-((minX+maxX)/2-W/2)*fitScale;
-      cy=H/2-((minY+maxY)/2-H/2)*fitScale;
+      const pad=60,xs=fitPts.map(p=>p.x),ys=fitPts.map(p=>p.y);
+      const fitS=Math.min((W-2*pad)/(Math.max(...xs)-Math.min(...xs)),(H-2*pad)/(Math.max(...ys)-Math.min(...ys)));
+      scale=iS*fitS; cx=W/2-((Math.min(...xs)+Math.max(...xs))/2-W/2)*fitS; cy=H/2-((Math.min(...ys)+Math.max(...ys))/2-H/2)*fitS;
     }
-    const project=(nLat,nLon)=>({x:cx+(nLon-lon)*111320*cosLat*scale,y:cy-(nLat-lat)*111320*scale});
+    const project=(nLat,nLon)=>({x:cx+(nLon-lon)*111320*cosL*scale,y:cy-(nLat-lat)*111320*scale});
     const nodePt=nid=>{const n=nodeMap[nid];return n?project(n.lat,n.lon):null;};
     if(mwWays.length>0||lkWays.length>0) return OSMFetcher._buildMotorway(mwWays,lkWays,nodePt,W,H);
     return OSMFetcher._buildIntersection(ways,nodeMap,project,lat,lon,W,H);
   }
 
   static _buildMotorway(mwWays,lkWays,nodePt,W,H) {
-    // Find dominant road (most ways = the main motorway)
     const byRef={};
     mwWays.forEach(w=>{const r=w.tags.ref||w.tags.name||'?';(byRef[r]=byRef[r]||[]).push(w);});
     const dominant=Object.values(byRef).sort((a,b)=>b.length-a.length)[0]||mwWays;
-    // Trace two carriageway chains
-    const byStart={},endSet=new Set();
-    dominant.forEach(w=>{byStart[w.nodes[0]]=w;endSet.add(w.nodes[w.nodes.length-1]);});
-    const starts=dominant.map(w=>w.nodes[0]).filter(n=>!endSet.has(n));
-    const trace=s=>{const ws=[],seen=new Set();let c=byStart[s];while(c&&!seen.has(c.id)){seen.add(c.id);ws.push(c);c=byStart[c.nodes[c.nodes.length-1]];}return ws;};
-    const chains=starts.slice(0,2).map(s=>trace(s));
+    const byS={},endSet=new Set();
+    dominant.forEach(w=>{byS[w.nodes[0]]=w;endSet.add(w.nodes[w.nodes.length-1]);});
+    const trStarts=dominant.map(w=>w.nodes[0]).filter(n=>!endSet.has(n));
+    const trWays=s=>{const ws=[],seen=new Set();let c=byS[s];while(c&&!seen.has(c.id)){seen.add(c.id);ws.push(c);c=byS[c.nodes[c.nodes.length-1]];}return ws;};
+    const chains=trStarts.slice(0,2).map(s=>trWays(s));
     const polys=chains.map(wl=>{const pts=[];wl.forEach(w=>{const wp=w.nodes.map(nid=>nodePt(nid)).filter(p=>p&&!isNaN(p.x));pts.push(...(pts.length?wp.slice(1):wp));});return pts;}).filter(p=>p.length>=2);
     const main=polys[0]||[{x:0,y:H/2},{x:W,y:H/2}];
-    // Proximity uses ONLY dominant chain nodes (filters out Ma-13 connections)
+    // Use dominant chain nodes only for proximity (excludes Ma-13)
     const domNodes=new Set(dominant.flatMap(w=>w.nodes));
-    const chainPts=[];
-    domNodes.forEach(nid=>{const p=nodePt(nid);if(p&&!isNaN(p.x))chainPts.push(p);});
-    const nearChain=pt=>chainPts.reduce((mn,p)=>Math.min(mn,Math.hypot(p.x-pt.x,p.y-pt.y)),Infinity);
-    // Snap to nearest point on drawn chains
-    const snap=pt=>{let best=pt,bestD=Infinity;polys.forEach(poly=>{for(let i=1;i<poly.length;i++){const a=poly[i-1],b=poly[i],dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;const t=l2?Math.max(0,Math.min(1,((pt.x-a.x)*dx+(pt.y-a.y)*dy)/l2)):0;const sx=a.x+t*dx,sy=a.y+t*dy,d=Math.hypot(pt.x-sx,pt.y-sy);if(d<bestD){bestD=d;best={x:sx,y:sy};}}});return best;};
+    const chainPts=[];domNodes.forEach(nid=>{const p=nodePt(nid);if(p&&!isNaN(p.x))chainPts.push(p);});
+    const nearC=pt=>chainPts.reduce((mn,p)=>Math.min(mn,Math.hypot(p.x-pt.x,p.y-pt.y)),Infinity);
+    // Snap branch end precisely onto drawn chain
+    const snap=pt=>{let best=pt,bD=Infinity;polys.forEach(poly=>{for(let i=1;i<poly.length;i++){const a=poly[i-1],b=poly[i],dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;const t=l2?Math.max(0,Math.min(1,((pt.x-a.x)*dx+(pt.y-a.y)*dy)/l2)):0;const sx=a.x+t*dx,sy=a.y+t*dy,d=Math.hypot(pt.x-sx,pt.y-sy);if(d<bD){bD=d;best={x:sx,y:sy};}}});return best;};
     const mainRoads=[{id:0,name:'Dual Carriageway',x1:main[0].x,y1:main[0].y,x2:main[main.length-1].x,y2:main[main.length-1].y,
       angleRad:Math.atan2(main[main.length-1].y-main[0].y,main[main.length-1].x-main[0].x),
       lanes:3,lanesEachWay:3,speedLimit:120,roadType:'motorway',
-      chain0:polys[0]||main, chain1:polys[1]?[...polys[1]].reverse():polys[0]||main}];
-    // Filter link ways to only those touching the dominant (Ma-20) chains
+      chain0:polys[0]||main,chain1:polys[1]?[...polys[1]].reverse():polys[0]||main}];
+    // Group nearby link ways
     const nearbyLk=lkWays.filter(w=>{
       const pts=w.nodes.map(nid=>nodePt(nid)).filter(p=>p&&!isNaN(p.x));
-      return pts.length>=2&&Math.min(nearChain(pts[0]),nearChain(pts[pts.length-1]))<=15;
+      return pts.length>=2&&Math.min(nearC(pts[0]),nearC(pts[pts.length-1]))<=15;
     });
     const groups=OSMFetcher._groupWays(nearbyLk);
     const slipRoads=groups.map((grp,i)=>{
       const pts=OSMFetcher._stitchGroup(grp,nodePt);
       if(pts.length<2)return null;
-      const ds=nearChain(pts[0]),de=nearChain(pts[pts.length-1]);
+      const ds=nearC(pts[0]),de=nearC(pts[pts.length-1]);
+      // OSM oneway=yes means pts order IS travel direction
+      // off-ramp: pts[0] near chain (car exits motorway here), pts[-1] is tip
+      // on-ramp:  pts[-1] near chain (car enters motorway here), pts[0] is tip
       const type=ds<=de?'off-ramp':'on-ramp';
-      const bRaw=type==='off-ramp'?pts[0]:pts[pts.length-1];
-      const tPt=type==='off-ramp'?pts[pts.length-1]:pts[0];
-      const bPt=snap(bRaw);
-      const renderPts=type==='off-ramp'?[bPt,...pts.slice(1,-1),tPt]:[tPt,...pts.slice(0,-1).reverse().slice(0,-1),bPt];
+      // renderPts: always in travel direction (as OSM stores them)
+      // Snap the motorway-end point onto the drawn chain for clean visual join
+      const renderPts=[...pts];
+      if(type==='off-ramp') renderPts[0]=snap(pts[0]);
+      else renderPts[renderPts.length-1]=snap(pts[pts.length-1]);
+      const bPt=type==='off-ramp'?renderPts[0]:renderPts[renderPts.length-1];
+      const tPt=type==='off-ramp'?renderPts[renderPts.length-1]:renderPts[0];
       return{id:i,type,fromRoadId:0,toRoadId:0,hasMergeConflict:type==='on-ramp',
         bx:bPt.x,by:bPt.y,tx:tPt.x,ty:tPt.y,slipLen:Math.hypot(tPt.x-bPt.x,tPt.y-bPt.y),
-        curve:pts.slice(1,-1),renderPts};
+        curve:pts.slice(1,-1),
+        renderPts};  // travel-direction order, branch snapped to chain
     }).filter(Boolean);
     console.log(`OSM: ${mwWays.length} mw, ${lkWays.length} lk → ${nearbyLk.length} nearby → ${groups.length} groups → ${slipRoads.length} slips`);
     return{mode:'motorway',junctionType:'interchange',mainRoads,slipRoads,cx:W/2,cy:H/2,
