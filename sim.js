@@ -525,7 +525,7 @@ class Renderer {
 
   _motorway(){
     const ctx=this.ctx,net=this.network;
-    const MW=20,SL=10;
+    const MW=16,SL=8;
     const poly=(pts,lw,col,dash=[])=>{
       if(!pts||pts.length<2)return;
       ctx.strokeStyle=col;ctx.lineWidth=lw;ctx.lineJoin='round';ctx.lineCap='round';
@@ -534,34 +534,33 @@ class Renderer {
       ctx.stroke();ctx.setLineDash([]);
     };
     const c0=net.mainRoads[0]?.chain0,c1=net.mainRoads[0]?.chain1;
-    // 1. Verges (all)
-    poly(c0,MW+18,'#b5c9a5');poly(c1,MW+18,'#b5c9a5');
-    net.slipRoads.forEach(s=>poly(s.renderPts,SL+12,'#b5c9a5'));
-    // 2. Slip surfaces first so motorway covers the join cleanly
-    net.slipRoads.forEach(s=>poly(s.renderPts,SL,'#6e7a8a'));
-    // 3. Motorway surface on top
-    poly(c0,MW,'#525c6e');poly(c1,MW,'#525c6e');
-    // 4. Motorway markings
-    poly(c0,1.5,'rgba(255,255,255,0.9)');poly(c1,1.5,'rgba(255,255,255,0.9)');
-    poly(c0,1,'rgba(255,255,255,0.4)',[10,8]);poly(c1,1,'rgba(255,255,255,0.4)',[10,8]);
-    poly(c0,5,'#6e9458');poly(c1,5,'#6e9458');
-    // 5. Slip markings
-    net.slipRoads.forEach(s=>poly(s.renderPts,0.8,'rgba(255,255,255,0.6)'));
-    // 6. Direction arrows
+    // 1. One big unified verge behind everything
+    poly(c0,MW*2+SL+20,'#9bb888');poly(c1,MW*2+SL+20,'#9bb888');
+    // 2. Motorway carriageways
+    poly(c0,MW,'#44505f');poly(c1,MW,'#44505f');
+    // 3. Slip roads ON TOP of motorway so they're visible at the join
+    net.slipRoads.forEach(s=>poly(s.renderPts,SL,'#5a6878'));
+    // 4. Motorway details on top of slip roads
+    poly(c0,2,'rgba(210,218,225,0.9)');poly(c1,2,'rgba(210,218,225,0.9)');
+    poly(c0,4,'#487838');poly(c1,4,'#487838');
+    // 5. Slip edge lines
+    net.slipRoads.forEach(s=>poly(s.renderPts,1,'rgba(185,192,182,0.8)'));
+    // 6. Direction arrows on motorway
     [c0,c1].forEach(c=>{
       if(!c||c.length<2)return;
-      ctx.fillStyle='rgba(255,255,255,0.4)';let d=0;
+      ctx.fillStyle='rgba(255,255,255,0.35)';let d=0;
       for(let i=1;i<c.length;i++){const dx=c[i].x-c[i-1].x,dy=c[i].y-c[i-1].y;d+=Math.hypot(dx,dy);
-        if(d>90){d=0;ctx.save();ctx.translate((c[i].x+c[i-1].x)/2,(c[i].y+c[i-1].y)/2);ctx.rotate(Math.atan2(dy,dx));
-          ctx.beginPath();ctx.moveTo(7,0);ctx.lineTo(-4,-3);ctx.lineTo(-4,3);ctx.closePath();ctx.fill();ctx.restore();}}
+        if(d>80){d=0;ctx.save();ctx.translate((c[i].x+c[i-1].x)/2,(c[i].y+c[i-1].y)/2);ctx.rotate(Math.atan2(dy,dx));
+          ctx.beginPath();ctx.moveTo(6,0);ctx.lineTo(-3,-2.5);ctx.lineTo(-3,2.5);ctx.closePath();ctx.fill();ctx.restore();}}
     });
+    // 7. Slip direction arrows
     net.slipRoads.forEach(s=>{
       const pts=s.renderPts;if(!pts||pts.length<2)return;
       const mi=Math.floor(pts.length*0.5);
       const p0=pts[Math.max(0,mi-1)],p1=pts[Math.min(mi,pts.length-1)];
       ctx.save();ctx.translate((p0.x+p1.x)/2,(p0.y+p1.y)/2);ctx.rotate(Math.atan2(p1.y-p0.y,p1.x-p0.x));
       ctx.fillStyle=s.type==='on-ramp'?'#15803d':'#b45309';
-      ctx.beginPath();ctx.moveTo(9,0);ctx.lineTo(-5,-5);ctx.lineTo(-5,5);ctx.closePath();ctx.fill();
+      ctx.beginPath();ctx.moveTo(8,0);ctx.lineTo(-5,-4);ctx.lineTo(-5,4);ctx.closePath();ctx.fill();
       ctx.restore();
     });
   }
