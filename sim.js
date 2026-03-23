@@ -326,32 +326,29 @@ class Vehicle {
 
   _initMotorway({routeType, mainRoadId, slipId}) {
     const net=this.network; this.routeType=routeType;
-    const LANES=3,laneSpd=l=>l===0?SPEED.motorwaySlow:l===1?SPEED.motorwayMid:SPEED.motorwayMain;
+    const laneSpd=l=>l===0?SPEED.motorwaySlow:l===1?SPEED.motorwayMid:SPEED.motorwayMain;
     const road=net.mainRoads[0];
     const chain0=road.chain0||[{x:road.x1,y:road.y1},{x:road.x2,y:road.y2}];
     const chain1=road.chain1||[...chain0].reverse();
-    const laneOff=(pts,lane)=>{
-      if(pts.length<2)return{ox:0,oy:0};
-      const dx=pts[1].x-pts[0].x,dy=pts[1].y-pts[0].y,len=Math.hypot(dx,dy)||1;
-      const d=(lane-(LANES-1)/2)*LANE_W;
-      return{ox:(-dy/len)*d,oy:(dx/len)*d};
-    };
+    // Each chain IS a carriageway centreline — no lane offset needed
+    // (at auto-fit scale LANE_W would push cars way off the road)
     if(routeType==='through'){
-      const dir=Math.random()<0.5?0:1; const pts=dir===0?chain0:chain1;
-      const lane=Math.floor(Math.random()*LANES),spd=laneSpd(lane)*(0.9+Math.random()*0.2);
-      const {ox,oy}=laneOff(pts,lane);
-      this.x=pts[0].x+ox;this.y=pts[0].y+oy;this.speed=spd;this.laneIdx=lane;
+      const dir=Math.random()<0.5?0:1;
+      const pts=dir===0?chain0:chain1;
+      const lane=Math.floor(Math.random()*3);
+      const spd=laneSpd(lane)*(0.9+Math.random()*0.2);
+      this.x=pts[0].x;this.y=pts[0].y;this.speed=spd;this.laneIdx=lane;
       this.routeDir=dir;this.roadId=road.id;this.isOnSlip=false;
       this.angle=pts.length>1?Math.atan2(pts[1].y-pts[0].y,pts[1].x-pts[0].x):0;
-      this.path=pts.slice(1).map((p,i,a)=>({x:p.x+ox,y:p.y+oy,action:i===a.length-1?'DONE':'MOVING',speed:spd}));
+      this.path=pts.slice(1).map((p,i,a)=>({x:p.x,y:p.y,action:i===a.length-1?'DONE':'MOVING',speed:spd}));
     }else if(routeType==='exit'){
       const slip=net.slipRoads.find(s=>s.id===slipId)||net.slipRoads[0];
       if(!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const d0=chain0.reduce((mn,p)=>Math.min(mn,Math.hypot(p.x-slip.bx,p.y-slip.by)),Infinity);
       const d1=chain1.reduce((mn,p)=>Math.min(mn,Math.hypot(p.x-slip.bx,p.y-slip.by)),Infinity);
-      const pts=d0<=d1?chain0:chain1; const {ox,oy}=laneOff(pts,0);
+      const pts=d0<=d1?chain0:chain1;
       const spawn=Math.hypot(pts[0].x-slip.bx,pts[0].y-slip.by)>Math.hypot(pts[pts.length-1].x-slip.bx,pts[pts.length-1].y-slip.by)?pts[0]:pts[pts.length-1];
-      this.x=spawn.x+ox;this.y=spawn.y+oy;this.speed=SPEED.motorwayMain;
+      this.x=spawn.x;this.y=spawn.y;this.speed=SPEED.motorwayMain;
       this.routeDir=d0<=d1?0:1;this.roadId=road.id;this.isOnSlip=false;
       const curve=slip.curve||[];
       this.path=[{x:slip.bx,y:slip.by,action:'DECEL',speed:SPEED.motorwayMain},...curve.map(p=>({x:p.x,y:p.y,action:'MOVING',speed:SPEED.motorwaySlip})),{x:slip.tx,y:slip.ty,action:'DONE',speed:SPEED.motorwaySlip}];
@@ -360,13 +357,13 @@ class Vehicle {
       if(!slip){this._initMotorway({routeType:'through',mainRoadId:0,slipId:0});return;}
       const d0=chain0.reduce((mn,p)=>Math.min(mn,Math.hypot(p.x-slip.bx,p.y-slip.by)),Infinity);
       const d1=chain1.reduce((mn,p)=>Math.min(mn,Math.hypot(p.x-slip.bx,p.y-slip.by)),Infinity);
-      const pts=d0<=d1?chain0:chain1; const {ox,oy}=laneOff(pts,0);
+      const pts=d0<=d1?chain0:chain1;
       const exit=Math.hypot(pts[0].x-slip.bx,pts[0].y-slip.by)>Math.hypot(pts[pts.length-1].x-slip.bx,pts[pts.length-1].y-slip.by)?pts[0]:pts[pts.length-1];
       this.x=slip.tx;this.y=slip.ty;
       this.mergeDelay=slip.hasMergeConflict?this.rules.conflictFactor*(1+Math.random()*2):0;
       this.speed=SPEED.motorwaySlip;this.routeDir=d0<=d1?0:1;this.roadId=road.id;this.isOnSlip=true;
       const curve=slip.curve||[];
-      this.path=[...[...curve].reverse().map(p=>({x:p.x,y:p.y,action:'MOVING',speed:SPEED.motorwaySlip})),{x:slip.bx,y:slip.by,action:'MERGE',speed:SPEED.motorwaySlip},{x:exit.x+ox,y:exit.y+oy,action:'DONE',speed:SPEED.motorwayMain}];
+      this.path=[...[...curve].reverse().map(p=>({x:p.x,y:p.y,action:'MOVING',speed:SPEED.motorwaySlip})),{x:slip.bx,y:slip.by,action:'MERGE',speed:SPEED.motorwaySlip},{x:exit.x,y:exit.y,action:'DONE',speed:SPEED.motorwayMain}];
     }
   }
 
