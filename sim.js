@@ -742,17 +742,25 @@ class OSMFetcher {
 
   // Stitch a group of connected ways into one ordered polyline
   static _stitchGroup(grpWays, nodePt) {
+    // Build byStart/byEnd for this group
     const gs={}, ge={};
     grpWays.forEach(w=>{gs[w.nodes[0]]=w; ge[w.nodes[w.nodes.length-1]]=w;});
-    const head=grpWays.find(w=>!ge[w.nodes[0]])||grpWays[0];
-    const ids=[], seen=new Set(); let cur=head;
-    while(cur&&!seen.has(cur.id)){
-      seen.add(cur.id);
-      ids.push(...(ids.length?cur.nodes.slice(1):cur.nodes));
-      cur=gs[cur.nodes[cur.nodes.length-1]];
+    // Find all chain starts (start node not used as end by another way in group)
+    const chainStarts=grpWays.filter(w=>!ge[w.nodes[0]]);
+    const heads=chainStarts.length>0?chainStarts:[grpWays[0]];
+    // Trace from each head, return the longest result
+    let best=[];
+    for(const head of heads){
+      const ids=[],seen=new Set(); let cur=head;
+      while(cur&&!seen.has(cur.id)){
+        seen.add(cur.id);
+        ids.push(...(ids.length?cur.nodes.slice(1):cur.nodes));
+        cur=gs[cur.nodes[cur.nodes.length-1]];
+      }
+      const pts=ids.map(nid=>nodePt(nid)).filter(p=>p&&!isNaN(p.x));
+      if(pts.length>best.length) best=pts;
     }
-    grpWays.filter(w=>!seen.has(w.id)).forEach(w=>ids.push(...w.nodes));
-    return ids.map(nid=>nodePt(nid)).filter(p=>p&&!isNaN(p.x));
+    return best;
   }
 
   static buildNetwork(osmData,lat,lon,W,H) {
