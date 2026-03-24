@@ -798,8 +798,14 @@ class OSMFetcher {
       laneW, slipW,
       chain0:polys[0]||main, chain1:polys[1]?[...polys[1]].reverse():polys[0]||main}];
     // Build slip roads for vehicle routing
-    const threshold=Math.max(15,25*scale/0.2);
-    const nearbyLk=lkWays.filter(w=>{const pts=wayPts(w);return pts.length>=2&&Math.min(nearMW(pts[0]),nearMW(pts[pts.length-1]))<=threshold;});
+    const threshold=Math.max(50,56*scale/0.2);
+    const nearbyLk=lkWays.filter(w=>{
+      const pts=wayPts(w);
+      if(pts.length<2) return false;
+      // Must be close to motorway AND have at least one point on canvas
+      const onCanvas=pts.some(p=>p.x>-50&&p.x<W+50&&p.y>-50&&p.y<H+50);
+      return onCanvas&&Math.min(nearMW(pts[0]),nearMW(pts[pts.length-1]))<=threshold;
+    });
     const groups=OSMFetcher._groupWays(nearbyLk);
     const slipRoads=groups.map((grp,i)=>{
       const pts=OSMFetcher._stitchGroup(grp,nodePt);
