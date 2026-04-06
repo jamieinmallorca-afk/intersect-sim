@@ -248,6 +248,24 @@
       ↓ Export CSV Report
     </button>
 
+    <!-- Recommendations -->
+    <button class="btn-recommend" id="btnRecommend" style="display:none">
+      ◈ Recommend Changes
+    </button>
+
+    <div class="recommend-panel" id="recommendPanel" style="display:none">
+      <div class="recommend-header">
+        <span class="label-tag">AI RECOMMENDATIONS</span>
+        <button class="recommend-close" id="recommendClose">✕</button>
+      </div>
+      <div class="recommend-body" id="recommendBody">
+        <div class="recommend-loading" id="recommendLoading" style="display:none">
+          <div class="spinner-small"></div><span>Analysing junction…</span>
+        </div>
+        <div id="recommendContent"></div>
+      </div>
+    </div>
+
   </aside>
 
 </main>
