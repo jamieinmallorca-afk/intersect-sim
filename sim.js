@@ -1159,6 +1159,10 @@ class AppController {
     document.getElementById('btnRun').addEventListener('click',()=>this._startSim());
     document.getElementById('btnPause').addEventListener('click',()=>this._togglePause());
     document.getElementById('btnExport').addEventListener('click',()=>this._exportCSV());
+    document.getElementById('btnRecommend').addEventListener('click',()=>this._recommend());
+    document.getElementById('recommendClose').addEventListener('click',()=>{
+      document.getElementById('recommendPanel').style.display='none';
+    });
     document.getElementById('graphMetric').addEventListener('change',()=>this._redrawGraph());
   }
   _bindPills(gid,key){
@@ -1558,6 +1562,7 @@ class AppController {
     document.getElementById('controlsSection').style.display='';
     document.getElementById('previewSection').style.display='';
     document.getElementById('btnExport').style.display='';
+    document.getElementById('btnRecommend').style.display='';
   }
   _showFeatures(){
     if(!this.network)return;
@@ -1617,6 +1622,96 @@ class AppController {
     if(!this.simulation)return;
     const blob=new Blob([this.simulation.metrics.exportCSV()],{type:'text/csv'});
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='traffic_metrics.csv';a.click();
+  }
+
+  async _recommend(){
+    const apiKey=document.getElementById('apiKeyInput')?.value?.trim();
+    if(!apiKey){alert('Please enter your Anthropic API key first.');return;}
+    const panel=document.getElementById('recommendPanel');
+    const loading=document.getElementById('recommendLoading');
+    const content=document.getElementById('recommendContent');
+    panel.style.display='';
+    loading.style.display='flex';
+    content.innerHTML='';
+
+    // Gather current sim state
+    const snap=this.simulation?this.simulation.getSnapshot():{throughput:0,avgWait:0,queue:0,risk:0};
+    const net=this.network;
+    const slips=net?.slipRoads||[];
+    const onRamps=slips.filter(s=>s.type==='on-ramp');
+    const offRamps=slips.filter(s=>s.type==='off-ramp');
+    const history=this.simulation?.metrics?.history||{};
+    const recentQueue=history.queue?.slice(-20)||[];
+    const avgQueue=recentQueue.length?recentQueue.reduce((a,b)=>a+b,0)/recentQueue.length:0;
+    const recentWait=history.wait?.slice(-20)||[];
+    const avgWait=recentWait.length?recentWait.reduce((a,b)=>a+b,0)/recentWait.length:snap.avgWait;
+    const rulesMode=document.querySelector('.rule-btn.active')?.dataset?.rule||'spanish';
+    const volume=document.querySelector('.vol-btn.active')?.textContent?.trim()||'Medium';
+    const timeOfDay=document.getElementById('timeLabel')?.textContent||'Morning';
+
+    const prompt=`You are a traffic engineering expert analysing a real motorway junction in Palma, Mallorca (Ma-20/Ma-13 interchange). Based on simulation data, provide specific, actionable recommendations to improve traffic flow.
+
+JUNCTION DATA:
+- Junction: Ma-20 / Ma-13 interchange, Palma de Mallorca
+- Type: Motorway interchange (dual carriageway, 3 lanes each direction)
+- Total slip roads: ${slips.length} (${onRamps.length} on-ramps labelled S1-S${slips.length}, ${offRamps.length} off-ramps)
+- On-ramps: ${onRamps.map(s=>s.label).join(', ')||'none detected'}
+- Off-ramps: ${offRamps.map(s=>s.label).join(', ')||'none detected'}
+
+SIMULATION METRICS (current run):
+- Traffic volume: ${volume}
+- Time of day: ${timeOfDay}
+- Road rules: ${rulesMode} driving behaviour
+- Cars/minute throughput: ${snap.throughput}
+- Average wait time: ${avgWait.toFixed(1)}s
+- Congestion index (queued vehicles): ${avgQueue.toFixed(1)}
+- Collision risk score: ${(snap.risk*100).toFixed(0)}%
+
+KNOWN ISSUES AT THIS JUNCTION (from real-world context):
+- Heavy congestion during morning rush hour (07:30-09:30) from Andratx direction
+- Ma-13 airport traffic creates merge conflicts at peak times
+- Short merge distances on several on-ramps
+- No hard shoulder on main carriageway through junction
+
+Provide exactly 5 specific recommendations. For each recommendation respond with valid JSON in this exact format (respond with ONLY the JSON array, no other text):
+[
+  {
+    "title": "Short title (max 8 words)",
+    "detail": "2-3 sentence explanation of the change and why it helps",
+    "impact": "high|medium|low",
+    "slips": ["S1","S3"],
+    "cost": "Low|Medium|High|Very High"
+  }
+]
+
+Focus on: merge distances, slip road geometry, lane management, signage/variable speed limits, and ramp metering. Reference specific slip road numbers where relevant.`;
+
+    try{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content:prompt}]})
+      });
+      if(!resp.ok){const e=await resp.json();throw new Error(e.error?.message||`API error ${resp.status}`);}
+      const data=await resp.json();
+      const text=data.content?.[0]?.text||'';
+      // Parse JSON from response
+      const match=text.match(/\[[\s\S]*\]/);
+      if(!match)throw new Error('Could not parse recommendations');
+      const recs=JSON.parse(match[0]);
+      loading.style.display='none';
+      content.innerHTML=recs.map((r,i)=>`
+        <div class="rec-item">
+          <div class="rec-title"><span class="rec-num">${i+1}</span>${r.title}</div>
+          <div class="rec-body">${r.detail}</div>
+          ${r.slips?.length?`<div class="rec-slips">Affects: ${r.slips.join(' ')}</div>`:''}
+          <span class="rec-impact ${r.impact}">${r.impact.toUpperCase()} IMPACT · ${r.cost} COST</span>
+        </div>
+      `).join('');
+    }catch(err){
+      loading.style.display='none';
+      content.innerHTML=`<div style="color:#e05050;font-size:12px;padding:8px 0">Error: ${err.message}</div>`;
+    }
   }
 }
 
