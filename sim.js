@@ -1107,6 +1107,8 @@ class AppController {
       ['previewSection','markTool','controlsSection','analysisSection'].forEach(id=>{document.getElementById(id).style.display='none';});
       document.getElementById('uploadZone').style.display='';
       document.getElementById('btnExport').style.display='none';
+      document.getElementById('btnRecommend').style.display='none';
+      document.getElementById('recommendPanel').style.display='none';
       this._roads=[];this._pendingOuter=null;this._pendingWaypoints=[];this._motorwayLine=null;this._motorwayA=null;this._motorwayB=null;this._pendingM1=null;this._pendingM3=null;
       this._stopSim();
     });
@@ -1159,8 +1161,8 @@ class AppController {
     document.getElementById('btnRun').addEventListener('click',()=>this._startSim());
     document.getElementById('btnPause').addEventListener('click',()=>this._togglePause());
     document.getElementById('btnExport').addEventListener('click',()=>this._exportCSV());
-    document.getElementById('btnRecommend').addEventListener('click',()=>this._recommend());
-    document.getElementById('recommendClose').addEventListener('click',()=>{
+    document.getElementById('btnRecommend')?.addEventListener('click',()=>this._recommend());
+    document.getElementById('recommendClose')?.addEventListener('click',()=>{
       document.getElementById('recommendPanel').style.display='none';
     });
     document.getElementById('graphMetric').addEventListener('change',()=>this._redrawGraph());
